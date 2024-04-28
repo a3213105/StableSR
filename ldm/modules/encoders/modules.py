@@ -38,7 +38,7 @@ class ClassEmbedder(nn.Module):
 
 class TransformerEmbedder(AbstractEncoder):
     """Some transformer encoder layers"""
-    def __init__(self, n_embed, n_layer, vocab_size, max_seq_len=77, device="cuda"):
+    def __init__(self, n_embed, n_layer, vocab_size, max_seq_len=77, device="cpu"):
         super().__init__()
         self.device = device
         self.transformer = TransformerWrapper(num_tokens=vocab_size, max_seq_len=max_seq_len,
@@ -55,7 +55,8 @@ class TransformerEmbedder(AbstractEncoder):
 
 class BERTTokenizer(AbstractEncoder):
     """ Uses a pretrained BERT tokenizer by huggingface. Vocab size: 30522 (?)"""
-    def __init__(self, device="cuda", vq_interface=True, max_length=77):
+    #def __init__(self, device="cuda", vq_interface=True, max_length=77):
+    def __init__(self, vq_interface=True, max_length=77, device="cpu"):
         super().__init__()
         from transformers import BertTokenizerFast  # TODO: add to reuquirements
         self.tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
@@ -82,8 +83,10 @@ class BERTTokenizer(AbstractEncoder):
 
 class BERTEmbedder(AbstractEncoder):
     """Uses the BERT tokenizr model and add some transformer encoder layers"""
+    #def __init__(self, n_embed, n_layer, vocab_size=30522, max_seq_len=77,
+    #             device="cuda",use_tokenizer=True, embedding_dropout=0.0):
     def __init__(self, n_embed, n_layer, vocab_size=30522, max_seq_len=77,
-                 device="cuda",use_tokenizer=True, embedding_dropout=0.0):
+                 use_tokenizer=True, embedding_dropout=0.0, device="cpu"):
         super().__init__()
         self.use_tknz_fn = use_tokenizer
         if self.use_tknz_fn:
@@ -146,8 +149,11 @@ class FrozenOpenCLIPEmbedder(AbstractEncoder):
         "last",
         "penultimate"
     ]
-    def __init__(self, arch="ViT-H-14", version="laion2b_s32b_b79k", device="cuda", max_length=77,
-                 freeze=True, layer="last"):
+    #def __init__(self, arch="ViT-H-14", version="laion2b_s32b_b79k", device="cuda", max_length=77,
+    #             freeze=True, layer="last"):
+    def __init__(self, arch="ViT-H-14", version="laion2b_s32b_b79k", max_length=77,
+                 freeze=True, layer="last", device="cpu"):
+        #arch="/root/.cache/huggingface/hub/models--laion--CLIP-ViT-H-14-laion2B-s32B-b79K/"
         super().__init__()
         assert layer in self.LAYERS
         model, _, _ = open_clip.create_model_and_transforms(arch, device=torch.device('cpu'), pretrained=version)
@@ -180,6 +186,8 @@ class FrozenOpenCLIPEmbedder(AbstractEncoder):
         x = self.model.token_embedding(text)  # [batch_size, n_ctx, d_model]
         x = x + self.model.positional_embedding
         x = x.permute(1, 0, 2)  # NLD -> LND
+        #import pdb
+        #pdb.set_trace()
         x = self.text_transformer_forward(x, attn_mask=self.model.attn_mask)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.model.ln_final(x)
@@ -200,7 +208,8 @@ class FrozenOpenCLIPEmbedder(AbstractEncoder):
 
 class FrozenCLIPEmbedder(AbstractEncoder):
     """Uses the CLIP transformer encoder for text (from Hugging Face)"""
-    def __init__(self, version="openai/clip-vit-large-patch14", device="cuda", max_length=77):
+    #def __init__(self, version="openai/clip-vit-large-patch14", device="cuda", max_length=77):
+    def __init__(self, version="openai/clip-vit-large-patch14", max_length=77, device="cpu"):
         super().__init__()
         self.tokenizer = CLIPTokenizer.from_pretrained(version)
         self.transformer = CLIPTextModel.from_pretrained(version)
@@ -227,7 +236,8 @@ class FrozenCLIPEmbedder(AbstractEncoder):
 
 class FinetuningCLIPEmbedder(AbstractEncoder):
     """Uses the CLIP transformer encoder for text (from Hugging Face)"""
-    def __init__(self, version="openai/clip-vit-large-patch14", device="cuda", max_length=77):
+    #def __init__(self, version="openai/clip-vit-large-patch14", device="cuda", max_length=77):
+    def __init__(self, version="openai/clip-vit-large-patch14", max_length=77, device="cpu"):
         super().__init__()
         setattr(transformers.models.clip.modeling_clip,"CLIPTextTransformer", CLIPTextTransformer_M)
         self.tokenizer = CLIPTokenizer.from_pretrained(version)
@@ -257,7 +267,8 @@ class FrozenCLIPTextEmbedder(nn.Module):
     """
     Uses the CLIP transformer encoder for text.
     """
-    def __init__(self, version='ViT-L/14', device="cuda", max_length=77, n_repeat=1, normalize=True):
+    #def __init__(self, version='ViT-L/14', device="cuda", max_length=77, n_repeat=1, normalize=True):
+    def __init__(self, version='ViT-L/14', max_length=77, n_repeat=1, normalize=True, device = "cpu"):
         super().__init__()
         self.model, _ = clip.load(version, jit=False, device="cpu")
         self.device = device

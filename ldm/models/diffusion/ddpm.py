@@ -1742,7 +1742,8 @@ class LatentDiffusionSRTextWT(DDPM):
     def instantiate_structcond_stage(self, config):
         model = instantiate_from_config(config)
         self.structcond_stage_model = model
-        self.structcond_stage_model.train()
+        #self.structcond_stage_model.train()
+        self.structcond_stage_model.eval()
 
     def _get_denoise_row_from_list(self, samples, desc='', force_no_decoder_quantization=False):
         denoise_row = []
@@ -2678,6 +2679,8 @@ class LatentDiffusionSRTextWT(DDPM):
                                        quantize_denoised=quantize_denoised,
                                        return_x0=return_x0,
                                        score_corrector=score_corrector, corrector_kwargs=corrector_kwargs, t_replace=t_replace)
+        #import pdb
+        #pdb.set_trace()
         if return_codebook_ids:
             raise DeprecationWarning("Support dropped.")
             model_mean, _, model_log_variance, logits = outputs
@@ -2792,17 +2795,22 @@ class LatentDiffusionSRTextWT(DDPM):
     def p_sample_loop(self, cond, struct_cond, shape, return_intermediates=False,
                       x_T=None, verbose=True, callback=None, timesteps=None, quantize_denoised=False,
                       mask=None, x0=None, img_callback=None, start_T=None,
-                      log_every_t=None, time_replace=None, adain_fea=None, interfea_path=None):
+                      log_every_t=None, time_replace=None, adain_fea=None, interfea_path=None, bf16=False):
 
         if not log_every_t:
             log_every_t = self.log_every_t
         device = self.betas.device
         b = shape[0]
         if x_T is None:
-            img = torch.randn(shape, device=device)
+            img = torch.randn(shape, device=device) #.to(torch.bfloat16)
         else:
             img = x_T
+         
 
+        
+        #import pdb
+        #pdb.set_trace()
+            
         intermediates = [img]
         if timesteps is None:
             timesteps = self.num_timesteps
@@ -2841,7 +2849,12 @@ class LatentDiffusionSRTextWT(DDPM):
 
             if interfea_path is not None:
                 batch_list.append(struct_cond_input)
-
+            
+            if bf16 == True:
+                img = img.to(torch.bfloat16)
+            
+            #import pdb
+            #pdb.set_trace()
             img = self.p_sample(img, cond, struct_cond_input, ts,
                                 clip_denoised=self.clip_denoised,
                                 quantize_denoised=quantize_denoised, t_replace=t_replace)
@@ -2992,12 +3005,16 @@ class LatentDiffusionSRTextWT(DDPM):
                 list(map(lambda x: x[:batch_size], cond[key])) for key in cond}
             else:
                 cond = [c[:batch_size] for c in cond] if isinstance(cond, list) else cond[:batch_size]
+        #import pdb
+        #pdb.set_trace()
+        bf16 = kwargs['bf16']
+        
         return self.p_sample_loop(cond,
                                   struct_cond,
                                   shape,
                                   return_intermediates=return_intermediates, x_T=x_T,
                                   verbose=verbose, timesteps=timesteps, quantize_denoised=quantize_denoised,
-                                  mask=mask, x0=x0, time_replace=time_replace, adain_fea=adain_fea, interfea_path=interfea_path, start_T=start_T)
+                                  mask=mask, x0=x0, time_replace=time_replace, adain_fea=adain_fea, interfea_path=interfea_path, start_T=start_T, bf16 = bf16)
 
     @torch.no_grad()
     def sample_canvas(self, cond, struct_cond, batch_size=16, return_intermediates=False, x_T=None,
@@ -3187,6 +3204,10 @@ class DiffusionWrapper(pl.LightningModule):
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']
 
     def forward(self, x, t, c_concat: list = None, c_crossattn: list = None, struct_cond=None, seg_cond=None):
+        
+        #import pdb
+        #pdb.set_trace()
+        
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)
         elif self.conditioning_key == 'concat':
@@ -3195,6 +3216,12 @@ class DiffusionWrapper(pl.LightningModule):
         elif self.conditioning_key == 'crossattn':
             cc = torch.cat(c_crossattn, 1)
             if seg_cond is None:
+                #print(x.size())
+                #print(t.size())
+                #print(cc.size())
+                #for key, value in struct_cond.items():
+                #    print(key, value.size())
+                    
                 out = self.diffusion_model(x, t, context=cc, struct_cond=struct_cond)
             else:
                 out = self.diffusion_model(x, t, context=cc, struct_cond=struct_cond, seg_cond=seg_cond)

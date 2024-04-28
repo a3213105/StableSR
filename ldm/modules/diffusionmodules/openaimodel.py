@@ -1537,5 +1537,6 @@ class EncoderUNetModelWT(nn.Module):
 
         for i in range(len(result_list)):
             results[str(result_list[i].size(-1))] = self.fea_tran[i](result_list[i], emb)
+            #results[result_list[i].size(-1)] = self.fea_tran[i](result_list[i], emb)
 
         return results
