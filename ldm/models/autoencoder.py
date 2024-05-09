@@ -501,8 +501,8 @@ class AutoencoderKLResi(pl.LightningModule):
         else:
             missing_list = []
 
-        print('>>>>>>>>>>>>>>>>>missing>>>>>>>>>>>>>>>>>>>')
-        print(missing_list)
+        # print('>>>>>>>>>>>>>>>>>missing>>>>>>>>>>>>>>>>>>>')
+        # print(missing_list)
         self.synthesis_data = synthesis_data
         self.use_usm = use_usm
         self.test_gt = test_gt
@@ -520,19 +520,19 @@ class AutoencoderKLResi(pl.LightningModule):
                 else:
                     param.requires_grad = False
 
-        print('>>>>>>>>>>>>>>>>>trainable_list>>>>>>>>>>>>>>>>>>>')
-        trainable_list = []
-        for name, params in self.named_parameters():
-            if params.requires_grad:
-                trainable_list.append(name)
-        print(trainable_list)
+        # print('>>>>>>>>>>>>>>>>>trainable_list>>>>>>>>>>>>>>>>>>>')
+        # trainable_list = []
+        # for name, params in self.named_parameters():
+        #     if params.requires_grad:
+        #         trainable_list.append(name)
+        # print(trainable_list)
 
-        print('>>>>>>>>>>>>>>>>>Untrainable_list>>>>>>>>>>>>>>>>>>>')
-        untrainable_list = []
-        for name, params in self.named_parameters():
-            if not params.requires_grad:
-                untrainable_list.append(name)
-        print(untrainable_list)
+        # print('>>>>>>>>>>>>>>>>>Untrainable_list>>>>>>>>>>>>>>>>>>>')
+        # untrainable_list = []
+        # for name, params in self.named_parameters():
+        #     if not params.requires_grad:
+        #         untrainable_list.append(name)
+        # print(untrainable_list)
         # untrainable_list = list(set(trainable_list).difference(set(missing_list)))
         # print('>>>>>>>>>>>>>>>>>untrainable_list>>>>>>>>>>>>>>>>>>>')
         # print(untrainable_list)
@@ -563,13 +563,19 @@ class AutoencoderKLResi(pl.LightningModule):
                     del sd[k]
         missing, unexpected = self.load_state_dict(sd, strict=False) if not only_model else self.model.load_state_dict(
             sd, strict=False)
-        print(f"Encoder Restored from {path} with {len(missing)} missing and {len(unexpected)} unexpected keys")
-        if len(missing) > 0:
-            print(f"Missing Keys: {missing}")
-        if len(unexpected) > 0:
-            print(f"Unexpected Keys: {unexpected}")
+        # print(f"Encoder Restored from {path} with {len(missing)} missing and {len(unexpected)} unexpected keys")
+        # if len(missing) > 0:
+        #     print(f"Missing Keys: {missing}")
+        # if len(unexpected) > 0:
+        #     print(f"Unexpected Keys: {unexpected}")
         return missing
 
+    def forward(self, x, z):
+        enc_fea = self.encoder.forward_fea(x)
+        z = self.post_quant_conv(z)
+        dec = self.decoder(z, enc_fea)
+        return dec
+    
     def encode(self, x):
         h, enc_fea = self.encoder(x, return_fea=True)
         moments = self.quant_conv(h)
@@ -588,7 +594,7 @@ class AutoencoderKLResi(pl.LightningModule):
         dec = self.decoder(z, enc_fea)
         return dec
 
-    def forward(self, input, latent, sample_posterior=True):
+    def forward1(self, input, latent, sample_posterior=True):
         posterior, enc_fea_lq = self.encode(input)
         dec = self.decode(latent, enc_fea_lq)
         return dec, posterior

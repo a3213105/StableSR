@@ -78,6 +78,7 @@ model:
       params:
         freeze: True
         layer: "penultimate"
+        version: ./open_clip_pytorch_model.bin
 
     structcond_stage_config:
       target: ldm.modules.diffusionmodules.openaimodel.EncoderUNetModelWT

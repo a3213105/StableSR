@@ -226,7 +226,8 @@ class AttnBlock(nn.Module):
         q = q.permute(0,2,1)   # b,hw,c
         k = k.reshape(b,c,h*w) # b,c,hw
         w_ = torch.bmm(q,k)     # b,hw,hw    w[b,i,j]=sum_c q[b,i,c]k[b,c,j]
-        w_ = w_ * (int(c)**(-0.5))
+        # w_ = w_ * (int(c)**(-0.5))
+        w_ = w_ * (c**(-0.5))
         w_ = torch.nn.functional.softmax(w_, dim=2)
 
         # attend to values
@@ -531,6 +532,26 @@ class Encoder(nn.Module):
                                         stride=1,
                                         padding=1)
 
+    def forward_fea(self, x):
+        # timestep embedding
+        temb = None
+
+        # downsampling
+        hs = [self.conv_in(x)]
+        fea_list = []
+        for i_level in range(self.num_resolutions):
+            for i_block in range(self.num_res_blocks):
+                h = self.down[i_level].block[i_block](hs[-1], temb)
+                if len(self.down[i_level].attn) > 0:
+                    h = self.down[i_level].attn[i_block](h)
+                hs.append(h)
+            if i_level==1 or i_level==2:
+                fea_list.append(h)
+            if i_level != self.num_resolutions-1:
+                hs.append(self.down[i_level].downsample(hs[-1]))
+
+        return fea_list
+    
     def forward(self, x, return_fea=False):
         # timestep embedding
         temb = None

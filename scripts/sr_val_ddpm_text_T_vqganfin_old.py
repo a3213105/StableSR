@@ -236,14 +236,14 @@ def main():
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     
     
-    print('>>>>>>>>>>color correction>>>>>>>>>>>')
-    if opt.colorfix_type == 'adain':
-    	print('Use adain color correction')
-    elif opt.colorfix_type == 'wavelet':
-    	print('Use wavelet color correction')
-    else:
-    	print('No color correction')
-    print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
+    # print('>>>>>>>>>>color correction>>>>>>>>>>>')
+    # if opt.colorfix_type == 'adain':
+    # 	print('Use adain color correction')
+    # elif opt.colorfix_type == 'wavelet':
+    # 	print('Use wavelet color correction')
+    # else:
+    # 	print('No color correction')
+    # print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
     
     vqgan_config = OmegaConf.load("configs/autoencoder/autoencoder_kl_64x64x4_resi.yaml")
     vq_model = load_model_from_config(vqgan_config, opt.vqgan_ckpt)
