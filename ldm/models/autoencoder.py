@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 
-from ldm.modules.diffusionmodules.model import Encoder, Decoder, Decoder_Mix
+from ldm.modules.diffusionmodules.model import Encoder, Decoder, Decoder_Mix, EncoderKLResi
 from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
 
 from ldm.util import instantiate_from_config
@@ -484,7 +484,7 @@ class AutoencoderKLResi(pl.LightningModule):
                  ):
         super().__init__()
         self.image_key = image_key
-        self.encoder = Encoder(**ddconfig)
+        self.encoder = EncoderKLResi(**ddconfig)
         self.decoder = Decoder_Mix(**ddconfig)
         self.decoder.fusion_w = fusion_w
         self.loss = instantiate_from_config(lossconfig)
@@ -571,7 +571,7 @@ class AutoencoderKLResi(pl.LightningModule):
         return missing
 
     def forward(self, x, z):
-        enc_fea = self.encoder.forward_fea(x)
+        enc_fea = self.encoder(x)
         z = self.post_quant_conv(z)
         dec = self.decoder(z, enc_fea)
         return dec

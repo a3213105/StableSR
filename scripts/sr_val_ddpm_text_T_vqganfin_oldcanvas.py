@@ -122,6 +122,10 @@ def cleanup_torchscript_cache():
     torch.jit._recursive.concrete_type_store = torch.jit._recursive.ConcreteTypeStore()
     torch.jit._state._clear_class_state()
 
+dtype_mapping = {
+	torch.float32: ov.Type.f32,
+	torch.float64: ov.Type.f64
+}
 
 def convert_encoder(text_encoder: torch.nn.Module, ir_path:str):
     """
@@ -183,35 +187,30 @@ def convert_unet(unet:torch.nn.Module, ir_path:str, num_channels:int = 4, width:
         cleanup_torchscript_cache()
         print('U-Net successfully converted to IR')
 
+
 def convert_vqgan(vq: torch.nn.Module, ir_path: str, width:int = 512, height:int = 512):
-    """
-    Convert VAE model to IR format.
-    VAE model, creates wrapper class for export only necessary for inference part,
-    prepares example inputs for onversion
-    Parameters:
-        vae (torch.nn.Module): VAE PyTorch model
-        ir_path (Path): File for storing model
-        width (int, optional, 512): input width
-        height (int, optional, 512): input height
-    Returns:
-        None
-    """
-    class VQGANWrapper(torch.nn.Module):
-        def __init__(self, vqgan):
-            super().__init__()
-            self.vqgan = vqgan
 
-        def forward(self, image, samples):
-            return self.vqgan(image, samples)
+    # class VQGANWrapper(torch.nn.Module):
+    #     def __init__(self, vqgan):
+    #         super().__init__()
+    #         self.vqgan = vqgan
 
+    #     def forward(self, image, samples):
+    #         return self.vqgan(image, samples)
     ir_path = Path(ir_path)
     if not ir_path.exists():
-        vqgan = VQGANWrapper(vqgan)
-        vqgan.eval()
-        image = torch.randn((1, 3, width, height)).float()
-        samples = torch.randn((1, 4, width/8, height/8)).float()
+        # vqgan = VQGANWrapper(vqgan)
+        vq.eval()
+        image = torch.randn((1, 3, width, height))
+        samples = torch.randn((1, 4, int(width/8), int(height/8)))        
+        dummy_inputs = (image, samples)
+        input_info = []
+        for input_tensor in dummy_inputs:
+            shape = ov.PartialShape(tuple(input_tensor.shape))
+            element_type = dtype_mapping[input_tensor.dtype]
+            input_info.append((shape, element_type))
         with torch.no_grad():
-            ov_model = ov.convert_model(vae_encoder, example_input=(image, samples), input=([1,3, width, height], [1, 4, width/8, height/8]))
+            ov_model = ov.convert_model(vq, example_input=dummy_inputs, input=input_info)
         ov.save_model(ov_model, ir_path)
         del ov_model
         cleanup_torchscript_cache()
@@ -387,6 +386,8 @@ def main():
 	vqgan_config = OmegaConf.load("configs/autoencoder/autoencoder_kl_64x64x4_resi.yaml")
 	vq_model = load_model_from_config(vqgan_config, opt.vqgan_ckpt)
 	vq_model = vq_model.eval()
+ 
+	# convert_vqgan(vq_model, "/tmp/vq_model.xml")
 	if opt.bf16 == True:
 		vq_model = vq_model.to(torch.bfloat16)
 
@@ -446,8 +447,7 @@ def main():
 			# 			print(p.key_averages().table(sort_by="self_cpu_time_total", row_limit=15))
 			# 	exit()
 
-	# precision_scope = autocast if opt.precision == "autocast" else nullcontext
-	# with torch.no_grad():
+
 	with torch.no_grad(), torch.cpu.amp.autocast(enabled=opt.bf16, dtype=torch.bfloat16):
 		all_samples = list()
 		print(f"img size={len(init_image_list)}, loop={opt.loop}, shape={init_image_list[0].size()}")
@@ -491,6 +491,17 @@ def main():
 			# vq_model = torch.jit.freeze(vq_model_ipex)
 			print(f"##### init_template={init_template.shape}, samples={samples.shape}")
 			x_samples = vq_model(init_template, samples * 1. / model.scale_factor)
+			if False : #export_model:
+				dummy_inputs = (init_template, samples * 1. / model.scale_factor)
+				input_info = []
+				for input_tensor in dummy_inputs:
+					shape = ov.PartialShape(tuple(input_tensor.shape))
+					element_type = dtype_mapping[input_tensor.dtype]
+					input_info.append((shape, element_type))
+				ov_model = ov.convert_model(vq_model, example_input=dummy_inputs, input=input_info)
+				ov.save_model(ov_model, "/tmp/vq_model.xml")
+				del ov_model
+				cleanup_torchscript_cache()
 			t5 = time.time()
 			if ori_size is not None:
 				x_samples = x_samples[:, :, :ori_size[-2], :ori_size[-1]]
