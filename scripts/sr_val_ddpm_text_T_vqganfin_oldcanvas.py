@@ -16,7 +16,6 @@ from contextlib import nullcontext
 import time
 from pytorch_lightning import seed_everything
 import intel_extension_for_pytorch as ipex
-import openvino as ov
 
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
@@ -114,108 +113,6 @@ def load_img(path):
 	image = torch.from_numpy(image)
 	return 2.*image - 1.
 
-def cleanup_torchscript_cache():
-    """
-    Helper for removing cached model representation
-    """
-    torch._C._jit_clear_class_registry()
-    torch.jit._recursive.concrete_type_store = torch.jit._recursive.ConcreteTypeStore()
-    torch.jit._state._clear_class_state()
-
-dtype_mapping = {
-	torch.float32: ov.Type.f32,
-	torch.float64: ov.Type.f64
-}
-
-def convert_encoder(text_encoder: torch.nn.Module, ir_path:str):
-    """
-    Convert Text Encoder model to IR.
-    Function accepts pipeline, prepares example inputs for conversion
-    Parameters:
-        text_encoder (torch.nn.Module): text encoder PyTorch model
-        ir_path (Path): File for storing model
-    Returns:
-        None
-    """
-    ir_path = Path(ir_path)
-    if not ir_path.exists():
-        input_ids = torch.ones((1, 77), dtype=torch.long)
-        # switch model to inference mode
-        text_encoder.eval()
-
-        # disable gradients calculation for reducing memory consumption
-        with torch.no_grad():
-            # export model
-            ov_model = ov.convert_model(
-                text_encoder,  # model instance
-                example_input=input_ids,  # example inputs for model tracing
-                input=([1,77],)  # input shape for conversion
-            )
-            ov.save_model(ov_model, ir_path)
-            del ov_model
-            cleanup_torchscript_cache()
-        print('Text Encoder successfully converted to IR')
-
-def convert_unet(unet:torch.nn.Module, ir_path:str, num_channels:int = 4, width:int = 64, height:int = 64):
-    dtype_mapping = {
-        torch.float32: ov.Type.f32,
-        torch.float64: ov.Type.f64
-    }
-    ir_path = Path(ir_path)
-    if not ir_path.exists():
-        # prepare inputs
-        encoder_hidden_state = torch.ones((2, 77, 1024))
-        latents_shape = (2, num_channels, width, height)
-        latents = torch.randn(latents_shape)
-        t = torch.from_numpy(np.array(1, dtype=np.float32))
-        unet.eval()
-        dummy_inputs = (latents, t, encoder_hidden_state)
-        input_info = []
-        for input_tensor in dummy_inputs:
-            shape = ov.PartialShape(tuple(input_tensor.shape))
-            element_type = dtype_mapping[input_tensor.dtype]
-            input_info.append((shape, element_type))
-
-        with torch.no_grad():
-            ov_model = ov.convert_model(
-                unet,
-                example_input=dummy_inputs,
-                input=input_info
-            )
-        ov.save_model(ov_model, ir_path)
-        del ov_model
-        cleanup_torchscript_cache()
-        print('U-Net successfully converted to IR')
-
-
-def convert_vqgan(vq: torch.nn.Module, ir_path: str, width:int = 512, height:int = 512):
-
-    # class VQGANWrapper(torch.nn.Module):
-    #     def __init__(self, vqgan):
-    #         super().__init__()
-    #         self.vqgan = vqgan
-
-    #     def forward(self, image, samples):
-    #         return self.vqgan(image, samples)
-    ir_path = Path(ir_path)
-    if not ir_path.exists():
-        # vqgan = VQGANWrapper(vqgan)
-        vq.eval()
-        image = torch.randn((1, 3, width, height))
-        samples = torch.randn((1, 4, int(width/8), int(height/8)))        
-        dummy_inputs = (image, samples)
-        input_info = []
-        for input_tensor in dummy_inputs:
-            shape = ov.PartialShape(tuple(input_tensor.shape))
-            element_type = dtype_mapping[input_tensor.dtype]
-            input_info.append((shape, element_type))
-        with torch.no_grad():
-            ov_model = ov.convert_model(vq, example_input=dummy_inputs, input=input_info)
-        ov.save_model(ov_model, ir_path)
-        del ov_model
-        cleanup_torchscript_cache()
-        print('VQGan successfully converted to IR')
-        
 def main():
 	parser = argparse.ArgumentParser()
 
@@ -254,7 +151,7 @@ def main():
 	parser.add_argument(
 		"--n_samples",
 		type=int,
-		default=2,
+		default=4,
 		help="how many samples to produce for each given prompt. A.k.a batch size",
 	)
 	parser.add_argument(
@@ -359,7 +256,6 @@ def main():
 	# else:
 	# 	print('No color correction')
 	# print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
- 
  
 	os.makedirs(opt.outdir, exist_ok=True)
 	outpath = opt.outdir

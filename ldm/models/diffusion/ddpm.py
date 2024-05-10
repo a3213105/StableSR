@@ -39,6 +39,8 @@ import cv2
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
+from ldm.models.diffusion.ov_operator_async import SRProcessor, SRResult
+
 __conditioning_keys__ = {'concat': 'c_concat',
                          'crossattn': 'c_crossattn',
                          'adm': 'y'}
@@ -1584,6 +1586,10 @@ class LatentDiffusionSRTextWT(DDPM):
                  mix_ratio=0.0,
                  *args, **kwargs):
         # put this in your init
+        self.ov_processor = None
+        self.ov_processor = SRProcessor("/home/sgui/image_generate/sr_model.xml")
+        shapes = [[1,77,1024], [1,4,64,64], [1], [1,4,64,64]]           
+        self.ov_processor.setup_model(stream_num = 8, bf16=True, shapes = shapes)
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
         self.scale_by_std = scale_by_std
         self.unfrozen_diff = unfrozen_diff
@@ -2292,7 +2298,7 @@ class LatentDiffusionSRTextWT(DDPM):
         loss = self(x, c, gt)
         return loss
 
-    def forward(self, x, c, gt, *args, **kwargs):
+    def forward1(self, x, c, gt, *args, **kwargs):
         index = np.random.randint(0, self.num_timesteps, size=x.size(0))
         t = torch.from_numpy(index)
         t = t.to(self.device).long()
@@ -2326,6 +2332,35 @@ class LatentDiffusionSRTextWT(DDPM):
 
         return [rescale_bbox(b) for b in bboxes]
 
+    def forward_ov(self, input_list, cond_list, t_in, context):
+        model_out = self.ov_processor(input_list, cond_list, t_in, context)
+        # print(f"##### model_out={len(model_out)},  {model_out[0].shape}, {model_out[0]}")
+        return model_out
+    
+    def forward(self, input_list, cond_list, t_in, context):
+        struct_cond_input = self.structcond_stage_model(cond_list, t_in)
+        model_out = self.model.diffusion_model(input_list, t_in, context, struct_cond=struct_cond_input)
+        return model_out
+
+    def loop_forward(self, input_list, cond_list, t_in, context, batch_size) :
+        noise_preds_row = []
+        nits = int(input_list.size(0) / batch_size)
+        for i in range(nits) :
+            startid = batch_size * i
+            endid = startid + batch_size
+            # print(f"##### process {startid} to {endid} with {batch_size}")
+            model_out = self.forward(input_list[startid:endid], cond_list[startid:endid], t_in[:batch_size], c[:batch_size])
+            for sample_i in range(model_out.size(0)):
+                noise_preds_row.append(model_out[sample_i].unsqueeze(0))
+        if nits * batch_size < input_list.size(0) :
+            startid = batch_size * nits
+            endid = input_list.size(0)
+            # print(f"##### process {startid} to {endid} with {batch_size}")
+            model_out = self.forward(input_list[startid:endid], cond_list[startid:endid], t_in[:endid-startid], c[:endid-startid])
+            for sample_i in range(model_out.size(0)):
+                noise_preds_row.append(model_out[sample_i].unsqueeze(0))
+        return noise_preds_row
+                
     def apply_model(self, x_noisy, t, cond, struct_cond, return_ids=False):
 
         if isinstance(cond, dict):
@@ -2565,8 +2600,9 @@ class LatentDiffusionSRTextWT(DDPM):
         input_list = []
         cond_list = []
         noise_preds = []
+        noise_preds_row = []
         for row in range(grid_rows):
-            noise_preds_row = []
+            # noise_preds_row = []
             for col in range(grid_cols):
                 if col < grid_cols-1 or row < grid_rows-1:
                     # extract tile from input image
@@ -2596,26 +2632,49 @@ class LatentDiffusionSRTextWT(DDPM):
                 cond_tile = struct_cond[:, :, input_start_y:input_end_y, input_start_x:input_end_x]
                 cond_list.append(cond_tile)
 
-                if len(input_list) == batch_size or col == grid_cols-1:
-                    input_list = torch.cat(input_list, dim=0)
-                    cond_list = torch.cat(cond_list, dim=0)
+            #     if len(input_list) == batch_size or col == grid_cols-1:
+            #         input_list = torch.cat(input_list, dim=0)
+            #         cond_list = torch.cat(cond_list, dim=0)
 
-                    struct_cond_input = self.structcond_stage_model(cond_list, t_in[:input_list.size(0)])
-                    model_out = self.apply_model(input_list, t_in[:input_list.size(0)], c[:input_list.size(0)], struct_cond_input, return_ids=return_codebook_ids)
+            #         struct_cond_input = self.structcond_stage_model(cond_list, t_in[:input_list.size(0)])
+            #         model_out = self.apply_model(input_list, t_in[:input_list.size(0)], c[:input_list.size(0)], struct_cond_input, return_ids=return_codebook_ids)
 
-                    if score_corrector is not None:
-                        assert self.parameterization == "eps"
-                        model_out = score_corrector.modify_score(self, model_out, input_list, t[:input_list.size(0)], c[:input_list.size(0)], **corrector_kwargs)
+            #         if score_corrector is not None:
+            #             assert self.parameterization == "eps"
+            #             model_out = score_corrector.modify_score(self, model_out, input_list, t[:input_list.size(0)], c[:input_list.size(0)], **corrector_kwargs)
 
-                    if return_codebook_ids:
-                        model_out, logits = model_out
+            #         if return_codebook_ids:
+            #             model_out, logits = model_out
 
-                    for sample_i in range(model_out.size(0)):
-                        noise_preds_row.append(model_out[sample_i].unsqueeze(0))
-                    input_list = []
-                    cond_list = []
+            #         for sample_i in range(model_out.size(0)):
+            #             noise_preds_row.append(model_out[sample_i].unsqueeze(0))
+            #         input_list = []
+            #         cond_list = []
 
-            noise_preds.append(noise_preds_row)
+            # noise_preds.append(noise_preds_row)
+
+        input_list = torch.cat(input_list, dim=0)
+        cond_list = torch.cat(cond_list, dim=0)
+        if self.ov_processor is Not None :
+            noise_preds_row = self.forward_ov(input_list, cond_list, t_in, c)
+        else :
+            noise_preds_row = self.loop_forward(input_list, cond_list, t_in, c, batch_size)
+        
+        # struct_cond_input = self.structcond_stage_model(cond_list, t_in[:input_list.size(0)])
+        # model_out = self.apply_model(input_list, t_in[:input_list.size(0)], c[:input_list.size(0)], struct_cond_input, return_ids=return_codebook_ids)
+        
+        # if score_corrector is not None:
+        #     assert self.parameterization == "eps"
+        #     model_out = score_corrector.modify_score(self, model_out, input_list, t[:input_list.size(0)], c[:input_list.size(0)], **corrector_kwargs)
+
+        # if return_codebook_ids:
+        #     model_out, logits = model_out
+
+        # for sample_i in range(model_out.size(0)):
+        #     noise_preds_row.append(model_out[sample_i].unsqueeze(0))
+
+        input_list = []
+        cond_list = []
 
         # Stitch noise predictions for all tiles
         noise_pred = torch.zeros(x.shape, device=x.device)
@@ -2640,7 +2699,8 @@ class LatentDiffusionSRTextWT(DDPM):
                 # print(noise_preds[row][col].size())
                 # print(tile_weights.size())
                 # print(noise_pred.size())
-                noise_pred[:, :, input_start_y:input_end_y, input_start_x:input_end_x] += noise_preds[row][col] * tile_weights
+                # noise_pred[:, :, input_start_y:input_end_y, input_start_x:input_end_x] += noise_preds[row][col] * tile_weights
+                noise_pred[:, :, input_start_y:input_end_y, input_start_x:input_end_x] += noise_preds_row[row*grid_cols+col] * tile_weights
                 contributors[:, :, input_start_y:input_end_y, input_start_x:input_end_x] += tile_weights
         # Average overlapping areas with more than 1 contributor
         noise_pred /= contributors
