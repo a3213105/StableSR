@@ -2356,14 +2356,14 @@ class LatentDiffusionSRTextWT(DDPM):
             startid = batch_size * i
             endid = startid + batch_size
             # print(f"##### process {startid} to {endid} with {batch_size}")
-            model_out = self.forward(input_list[startid:endid], cond_list[startid:endid], t_in[:batch_size], c[:batch_size])
+            model_out = self.forward(input_list[startid:endid], cond_list[startid:endid], t_in[:batch_size], context[:batch_size])
             for sample_i in range(model_out.size(0)):
                 noise_preds_row.append(model_out[sample_i].unsqueeze(0))
         if nits * batch_size < input_list.size(0) :
             startid = batch_size * nits
             endid = input_list.size(0)
             # print(f"##### process {startid} to {endid} with {batch_size}")
-            model_out = self.forward(input_list[startid:endid], cond_list[startid:endid], t_in[:endid-startid], c[:endid-startid])
+            model_out = self.forward(input_list[startid:endid], cond_list[startid:endid], t_in[:endid-startid], context[:endid-startid])
             for sample_i in range(model_out.size(0)):
                 noise_preds_row.append(model_out[sample_i].unsqueeze(0))
         return noise_preds_row
