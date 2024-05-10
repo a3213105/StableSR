@@ -1568,6 +1568,7 @@ class LatentDiffusionSRTextWT(DDPM):
                  first_stage_config,
                  cond_stage_config,
                  structcond_stage_config,
+                 openvino_config,
                  num_timesteps_cond=None,
                  cond_stage_key="image",
                  cond_stage_trainable=False,
@@ -1586,10 +1587,6 @@ class LatentDiffusionSRTextWT(DDPM):
                  mix_ratio=0.0,
                  *args, **kwargs):
         # put this in your init
-        self.ov_processor = None
-        self.ov_processor = SRProcessor("/home/sgui/image_generate/sr_model.xml")
-        shapes = [[1,77,1024], [1,4,64,64], [1], [1,4,64,64]]           
-        self.ov_processor.setup_model(stream_num = 8, bf16=True, shapes = shapes)
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
         self.scale_by_std = scale_by_std
         self.unfrozen_diff = unfrozen_diff
@@ -1618,6 +1615,7 @@ class LatentDiffusionSRTextWT(DDPM):
             self.scale_factor = scale_factor
         else:
             self.register_buffer('scale_factor', torch.tensor(scale_factor))
+        self.instantiate_openvino_stage(openvino_config)
         self.instantiate_first_stage(first_stage_config)
         self.instantiate_cond_stage(cond_stage_config)
         self.instantiate_structcond_stage(structcond_stage_config)
@@ -1715,6 +1713,15 @@ class LatentDiffusionSRTextWT(DDPM):
         if self.shorten_cond_schedule:
             self.make_cond_schedule()
 
+    def instantiate_openvino_stage(self, config):
+        try:
+            self.ov_processor = SRProcessor(config.params.xml_path)
+            shapes = [[1,77,1024], [1,4,64,64], [1], [1,4,64,64]]           
+            self.ov_processor.setup_model(stream_num = config.params.num_streams, bf16=True, shapes = shapes)
+        except Exception as e:
+            print(e)
+            self.ov_processor = None
+            
     def instantiate_first_stage(self, config):
         model = instantiate_from_config(config)
         self.first_stage_model = model.eval()
@@ -2655,10 +2662,10 @@ class LatentDiffusionSRTextWT(DDPM):
 
         input_list = torch.cat(input_list, dim=0)
         cond_list = torch.cat(cond_list, dim=0)
-        if self.ov_processor is Not None :
-            noise_preds_row = self.forward_ov(input_list, cond_list, t_in, c)
-        else :
+        if self.ov_processor is None :
             noise_preds_row = self.loop_forward(input_list, cond_list, t_in, c, batch_size)
+        else :
+            noise_preds_row = self.forward_ov(input_list, cond_list, t_in, c)
         
         # struct_cond_input = self.structcond_stage_model(cond_list, t_in[:input_list.size(0)])
         # model_out = self.apply_model(input_list, t_in[:input_list.size(0)], c[:input_list.size(0)], struct_cond_input, return_ids=return_codebook_ids)

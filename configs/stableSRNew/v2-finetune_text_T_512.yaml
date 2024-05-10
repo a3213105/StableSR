@@ -29,6 +29,11 @@ model:
     p2_k: ~
     # ignore_keys: []
 
+    openvino_config:
+       params:
+         xml_path: ./sr_model.xml
+         num_streams: 8
+
     unet_config:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModelDualcondV2
       params:
