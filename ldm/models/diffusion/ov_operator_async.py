@@ -104,22 +104,9 @@ class OV_Operator(object):
         hint = 'THROUGHPUT' if stream_num>1 else 'LATENCY'
         data_type = 'bf16' if bf16 else 'f32'
         config = {}
-        # supported_properties = self.core.get_property(device, 'SUPPORTED_PROPERTIES')
         config["NUM_STREAMS"] = str(stream_num)
-        # config['AFFINITY'] = "CORE"
-        # config['INFERENCE_NUM_THREADS'] = str(stream_num)
         config['PERF_COUNT'] = False
         config['INFERENCE_PRECISION_HINT'] = data_type #'bf16'#'f32'
-        # config['PERFORMANCE_HINT'] = "LATENCY" #hint # 'THROUGHPUT' #"LATENCY"
-        # config['EXECUTION_MODE_HINT'] = "PERFORMANCE"
-        # config['ENABLE_CPU_PINNING'] = 'YES'  #'YES'#'NUMA' #'HYBRID_AWARE' 
-        # config['SCHEDULING_CORE_TYPE'] = 'ANY_CORE'
-        # config['ENABLE_HYPER_THREADING'] = "NO"
-        #config['DYN_BATCH_ENABLED'] = 'YES'
-        #config['CPU_RUNTIME_CACHE_CAPACITY'] = '0'
-        # config['LOG_LEVEL'] = properties.log.Level.TRACE
-        # print(f"##### config={config}, stream_num={stream_num}, bf16={bf16}")
-        # print(f"##### supported_properties={supported_properties}")
         return config
 
 
@@ -129,9 +116,6 @@ class OV_Result :
     def __init__(self, outputs) :
         self.outputs = outputs
         self.results = {}
-        #for i in outputs:
-        #    #print('add results item {}'.format(i))
-        #    self.results[i] = {}
 
     def completion_callback(self, infer_request: InferRequest, index: any) :
         #if index not in self.results :
@@ -169,18 +153,14 @@ class SRProcessor(OV_Operator):
         return self.__call__(input_tensors)
 
     def __call__(self, input_list, cond_list, t_in, context) :
-        # nsize=len(input_tensors)
         nsize = input_list.size(0)
-        # print(f"##### start_async {nsize}")
         for i in range(input_list.size(0)) :
             self.infer_queue.start_async({0: cond_list[i].unsqueeze(0),
                                           1: t_in[0].unsqueeze(0),
                                           2: input_list[i].unsqueeze(0),
                                           3: context[0].unsqueeze(0)}, 
                                          userdata=i)
-        # print(f"##### wait_all")
         self.infer_queue.wait_all()
-        # print(f"##### finished")
         
         res = []
         if self.postprocess is None:
@@ -189,12 +169,4 @@ class SRProcessor(OV_Operator):
         else :
             for i in range(nsize) :
                 res.append(self.postprocess(self.res.results[i][0]))
-        return res
-    
-    def __async_call_(self, input_list, cond_list, t_in, context):
-        res = []
-        for i, x, cond, t, cont in enumerate(input_list, cond_list, t_in, context):
-            idle_id = self.infer_queue.get_idle_request_id()
-            res.append(self.res.results[idle_id])
-            self.infer_queue.start_async({0: cond, 1: t, 2: x, 3: cont}, userdata=idle_id)
         return res

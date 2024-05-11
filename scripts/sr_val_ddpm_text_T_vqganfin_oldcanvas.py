@@ -292,6 +292,7 @@ def main():
 	vq_model.decoder.fusion_w = opt.dec_w
 
 	config = OmegaConf.load(f"{opt.config}")
+	config.model.params.openvino_config.params.num_streams = opt.n_samples
 	model = load_model_from_config(config, f"{opt.ckpt}")
 	model = model.to(device)
 	model.configs = config
