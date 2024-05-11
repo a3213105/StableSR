@@ -99,7 +99,7 @@ def load_model_from_config(config, ckpt, verbose=False):
 		print("unexpected keys:")
 		print(u)
 
-	model.cuda()
+	model
 	model.eval()
 	return model
 
@@ -120,7 +120,7 @@ def read_image(im_path):
 	im = im[None].transpose(0,3,1,2)
 	im = (torch.from_numpy(im) - 0.5) / 0.5
 
-	return im.cuda()
+	return im
 
 def main():
 	parser = argparse.ArgumentParser()
@@ -257,7 +257,7 @@ def main():
 
 	config = OmegaConf.load(f"{opt.config}")
 	model = load_model_from_config(config, f"{opt.ckpt}")
-	device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+	device = torch.device("cpu") if torch.cuda.is_available() else torch.device("cpu")
 	model = model.to(device)
 
 	model.configs = config
@@ -306,7 +306,7 @@ def main():
 	precision_scope = autocast if opt.precision == "autocast" else nullcontext
 	niqe_list = []
 	with torch.no_grad():
-		with precision_scope("cuda"):
+		with precision_scope("cpu"):
 			with model.ema_scope():
 				tic = time.time()
 				all_samples = list()

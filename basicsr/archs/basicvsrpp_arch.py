@@ -184,13 +184,13 @@ class BasicVSRPlusPlus(nn.Module):
         for i, idx in enumerate(frame_idx):
             feat_current = feats['spatial'][mapping_idx[idx]]
             if self.cpu_cache:
-                feat_current = feat_current.cuda()
-                feat_prop = feat_prop.cuda()
+                feat_current = feat_current
+                feat_prop = feat_prop
             # second-order deformable alignment
             if i > 0 and self.is_with_alignment:
                 flow_n1 = flows[:, flow_idx[i], :, :, :]
                 if self.cpu_cache:
-                    flow_n1 = flow_n1.cuda()
+                    flow_n1 = flow_n1
 
                 cond_n1 = flow_warp(feat_prop, flow_n1.permute(0, 2, 3, 1))
 
@@ -202,11 +202,11 @@ class BasicVSRPlusPlus(nn.Module):
                 if i > 1:  # second-order features
                     feat_n2 = feats[module_name][-2]
                     if self.cpu_cache:
-                        feat_n2 = feat_n2.cuda()
+                        feat_n2 = feat_n2
 
                     flow_n2 = flows[:, flow_idx[i - 1], :, :, :]
                     if self.cpu_cache:
-                        flow_n2 = flow_n2.cuda()
+                        flow_n2 = flow_n2
 
                     flow_n2 = flow_n1 + flow_warp(flow_n2, flow_n1.permute(0, 2, 3, 1))
                     cond_n2 = flow_warp(feat_n2, flow_n2.permute(0, 2, 3, 1))
@@ -219,7 +219,7 @@ class BasicVSRPlusPlus(nn.Module):
             # concatenate and residual blocks
             feat = [feat_current] + [feats[k][idx] for k in feats if k not in ['spatial', module_name]] + [feat_prop]
             if self.cpu_cache:
-                feat = [f.cuda() for f in feat]
+                feat = [f for f in feat]
 
             feat = torch.cat(feat, dim=1)
             feat_prop = feat_prop + self.backbone[module_name](feat)
@@ -257,7 +257,7 @@ class BasicVSRPlusPlus(nn.Module):
             hr.insert(0, feats['spatial'][mapping_idx[i]])
             hr = torch.cat(hr, dim=1)
             if self.cpu_cache:
-                hr = hr.cuda()
+                hr = hr
 
             hr = self.reconstruction(hr)
             hr = self.lrelu(self.pixel_shuffle(self.upconv1(hr)))
@@ -410,8 +410,8 @@ class SecondOrderDeformableAlignment(ModulatedDeformConvPack):
 
 # if __name__ == '__main__':
 #     spynet_path = 'experiments/pretrained_models/flownet/spynet_sintel_final-3d2a1287.pth'
-#     model = BasicVSRPlusPlus(spynet_path=spynet_path).cuda()
-#     input = torch.rand(1, 2, 3, 64, 64).cuda()
+#     model = BasicVSRPlusPlus(spynet_path=spynet_path)
+#     input = torch.rand(1, 2, 3, 64, 64)
 #     output = model(input)
 #     print('===================')
 #     print(output.shape)

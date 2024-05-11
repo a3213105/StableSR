@@ -97,7 +97,7 @@ def load_model_from_config(config, ckpt, verbose=False):
 		print("unexpected keys:")
 		print(u)
 
-	model.cuda()
+	model
 	model.eval()
 	return model
 
@@ -230,7 +230,7 @@ def main():
 
 	config = OmegaConf.load(f"{opt.config}")
 	model = load_model_from_config(config, f"{opt.ckpt}")
-	device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+	device = torch.device("cpu") if torch.cuda.is_available() else torch.device("cpu")
 	model = model.to(device)
 
 	model.configs = config
@@ -287,7 +287,7 @@ def main():
 
 	precision_scope = autocast if opt.precision == "autocast" else nullcontext
 	with torch.no_grad():
-		with precision_scope("cuda"):
+		# with precision_scope("cpu"):
 			with model.ema_scope():
 				tic = time.time()
 				all_samples = list()
@@ -335,7 +335,7 @@ def main():
 						basename = os.path.splitext(os.path.basename(img_name))[0]
 						x_sample = 255. * rearrange(x_samples[i].cpu().numpy(), 'c h w -> h w c')
 						Image.fromarray(x_sample.astype(np.uint8)).save(
-							os.path.join(outpath, basename+'.png'))
+							os.path.join(outpath, basename+'_hq.png'))
 						init_image = torch.clamp((init_image + 1.0) / 2.0, min=0.0, max=1.0)
 						init_image = 255. * rearrange(init_image[i].cpu().numpy(), 'c h w -> h w c')
 						Image.fromarray(init_image.astype(np.uint8)).save(

@@ -609,11 +609,11 @@ class AutoencoderKLResi(pl.LightningModule):
                 self.queue_size = self.configs.data.params.train.params.get('queue_size', b*50)
             if not hasattr(self, 'queue_lr'):
                 assert self.queue_size % b == 0, f'queue size {self.queue_size} should be divisible by batch size {b}'
-                self.queue_lr = torch.zeros(self.queue_size, c, h, w).cuda()
+                self.queue_lr = torch.zeros(self.queue_size, c, h, w)
                 _, c, h, w = self.gt.size()
-                self.queue_gt = torch.zeros(self.queue_size, c, h, w).cuda()
-                self.queue_sample = torch.zeros(self.queue_size, c, h, w).cuda()
-                self.queue_latent = torch.zeros(self.queue_size, c_, h_, w_).cuda()
+                self.queue_gt = torch.zeros(self.queue_size, c, h, w)
+                self.queue_sample = torch.zeros(self.queue_size, c, h, w)
+                self.queue_latent = torch.zeros(self.queue_size, c_, h_, w_)
                 self.queue_ptr = 0
             if self.queue_ptr == self.queue_size:  # the pool is full
                 # do dequeue and enqueue
@@ -667,15 +667,15 @@ class AutoencoderKLResi(pl.LightningModule):
     @torch.no_grad()
     def get_input_synthesis(self, batch, val=False, test_gt=False):
 
-        jpeger = DiffJPEG(differentiable=False).cuda()  # simulate JPEG compression artifacts
-        im_gt = batch['gt'].cuda()
+        jpeger = DiffJPEG(differentiable=False)  # simulate JPEG compression artifacts
+        im_gt = batch['gt']
         if self.use_usm:
-            usm_sharpener = USMSharp().cuda()  # do usm sharpening
+            usm_sharpener = USMSharp()  # do usm sharpening
             im_gt = usm_sharpener(im_gt)
         im_gt = im_gt.to(memory_format=torch.contiguous_format).float()
-        kernel1 = batch['kernel1'].cuda()
-        kernel2 = batch['kernel2'].cuda()
-        sinc_kernel = batch['sinc_kernel'].cuda()
+        kernel1 = batch['kernel1']
+        kernel2 = batch['kernel2']
+        sinc_kernel = batch['sinc_kernel']
 
         ori_h, ori_w = im_gt.size()[2:4]
 

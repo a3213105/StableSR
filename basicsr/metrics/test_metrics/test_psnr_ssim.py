@@ -24,8 +24,8 @@ def test(img_path, img_path2, crop_border, test_y_channel=False):
     print(f'\tTensor (CPU) \tPSNR: {psnr_pth[0]:.6f} dB, \tSSIM: {ssim_pth[0]:.6f}')
 
     # --------------------- PyTorch (GPU) ---------------------
-    img = img.cuda()
-    img2 = img2.cuda()
+    img = img
+    img2 = img2
     psnr_pth = calculate_psnr_pt(img, img2, crop_border=crop_border, test_y_channel=test_y_channel)
     ssim_pth = calculate_ssim_pt(img, img2, crop_border=crop_border, test_y_channel=test_y_channel)
     print(f'\tTensor (GPU) \tPSNR: {psnr_pth[0]:.6f} dB, \tSSIM: {ssim_pth[0]:.6f}')

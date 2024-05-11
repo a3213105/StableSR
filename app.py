@@ -143,12 +143,12 @@ def load_model_from_config(config, ckpt, verbose=False):
 		print("unexpected keys:")
 		print(u)
 
-	model.cuda()
+	model
 	model.eval()
 	return model
 
 # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device("cuda")
+device = torch.device("cpu")
 vqgan_config = OmegaConf.load("./configs/autoencoder/autoencoder_kl_64x64x4_resi.yaml")
 vq_model = load_model_from_config(vqgan_config, './weights/vqgan_cfw_00011.ckpt')
 vq_model = vq_model.to(device)
@@ -197,7 +197,7 @@ def inference(image, upscale, dec_w, seed, model_type, ddpm_steps, colorfix_type
 
 	try: # global try
 			with torch.no_grad():
-				with precision_scope("cuda"):
+				with precision_scope("cpu"):
 					with model.ema_scope():
 						init_image = load_img(image)
 						init_image = F.interpolate(

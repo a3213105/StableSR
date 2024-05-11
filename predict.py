@@ -29,7 +29,7 @@ class Predictor(BasePredictor):
         """Load the model into memory to make running multiple predictions efficient"""
         config = OmegaConf.load("configs/stableSRNew/v2-finetune_text_T_512.yaml")
         self.model = load_model_from_config(config, "stablesr_000117.ckpt")
-        device = torch.device("cuda")
+        device = torch.device("cpu")
 
         self.model.configs = config
         self.model = self.model.to(device)
@@ -77,7 +77,7 @@ class Predictor(BasePredictor):
         seed_everything(seed)
 
         n_samples = 1
-        device = torch.device("cuda")
+        device = torch.device("cpu")
 
         cur_image = load_img(str(input_image)).to(device)
         cur_image = F.interpolate(
@@ -125,7 +125,7 @@ class Predictor(BasePredictor):
         output = "/tmp/out.png"
 
         with torch.no_grad():
-            with precision_scope("cuda"):
+            with precision_scope("cpu"):
                 with self.model.ema_scope():
                     init_image = cur_image
                     init_image = init_image.clamp(-1.0, 1.0)
@@ -214,7 +214,7 @@ def load_model_from_config(config, ckpt, verbose=False):
         print("unexpected keys:")
         print(u)
 
-    model.cuda()
+    model
     model.eval()
     return model
 
@@ -225,7 +225,7 @@ def read_image(im_path):
     im = im[None].transpose(0, 3, 1, 2)
     im = (torch.from_numpy(im) - 0.5) / 0.5
 
-    return im.cuda()
+    return im
 
 
 def space_timesteps(num_timesteps, section_counts):

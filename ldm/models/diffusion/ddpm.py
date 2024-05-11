@@ -1883,9 +1883,9 @@ class LatentDiffusionSRTextWT(DDPM):
                 self.queue_size = self.configs.data.params.train.params.get('queue_size', b*50)
             if not hasattr(self, 'queue_lr'):
                 assert self.queue_size % b == 0, f'queue size {self.queue_size} should be divisible by batch size {b}'
-                self.queue_lr = torch.zeros(self.queue_size, c, h, w).cuda()
+                self.queue_lr = torch.zeros(self.queue_size, c, h, w)
                 _, c, h, w = self.gt.size()
-                self.queue_gt = torch.zeros(self.queue_size, c, h, w).cuda()
+                self.queue_gt = torch.zeros(self.queue_size, c, h, w)
                 self.queue_ptr = 0
             if self.queue_ptr == self.queue_size:  # the pool is full
                 # do dequeue and enqueue
@@ -1928,17 +1928,17 @@ class LatentDiffusionSRTextWT(DDPM):
         """
 
         if not hasattr(self, 'jpeger'):
-            jpeger = DiffJPEG(differentiable=False).cuda()  # simulate JPEG compression artifacts
+            jpeger = DiffJPEG(differentiable=False)  # simulate JPEG compression artifacts
         if not hasattr(self, 'usm_sharpener'):
-            usm_sharpener = USMSharp().cuda()  # do usm sharpening
+            usm_sharpener = USMSharp()  # do usm sharpening
 
-        im_gt = batch['gt'].cuda()
+        im_gt = batch['gt']
         if self.use_usm:
             im_gt = usm_sharpener(im_gt)
         im_gt = im_gt.to(memory_format=torch.contiguous_format).float()
-        kernel1 = batch['kernel1'].cuda()
-        kernel2 = batch['kernel2'].cuda()
-        sinc_kernel = batch['sinc_kernel'].cuda()
+        kernel1 = batch['kernel1']
+        kernel2 = batch['kernel2']
+        sinc_kernel = batch['sinc_kernel']
 
         ori_h, ori_w = im_gt.size()[2:4]
 
@@ -3268,9 +3268,9 @@ class LatentDiffusionSRTextWTFFHQ(LatentDiffusionSRTextWT):
     def get_input(self, batch, k=None, return_first_stage_outputs=False, force_c_encode=False,
                   cond_key=None, return_original_cond=False, bs=None, val=False, text_cond=[''], return_gt=False, resize_lq=True):
 
-        im_gt = batch['gt'].cuda()
+        im_gt = batch['gt']
         im_gt = im_gt.to(memory_format=torch.contiguous_format).float()
-        im_lq = batch['lq'].cuda()
+        im_lq = batch['lq']
         im_lq = im_lq.to(memory_format=torch.contiguous_format).float()
 
         # clamp and round

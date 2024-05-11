@@ -94,7 +94,7 @@ def load_model_from_config(config, ckpt, verbose=False):
 		print("unexpected keys:")
 		print(u)
 
-	model.cuda()
+	model
 	model.eval()
 	return model
 
@@ -202,7 +202,7 @@ def main():
 	)
 
 	opt = parser.parse_args()
-	device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+	device = torch.device("cpu") if torch.cuda.is_available() else torch.device("cpu")
 
 	print('>>>>>>>>>>color correction>>>>>>>>>>>')
 	if opt.colorfix_type == 'adain':
@@ -302,7 +302,7 @@ def main():
 	precision_scope = autocast if opt.precision == "autocast" else nullcontext
 	niqe_list = []
 	with torch.no_grad():
-		with precision_scope("cuda"):
+		with precision_scope("cpu"):
 			with model.ema_scope():
 				tic = time.time()
 				count = 0

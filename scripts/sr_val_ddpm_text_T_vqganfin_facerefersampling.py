@@ -128,7 +128,7 @@ def load_model_from_config(config, ckpt, verbose=False):
         print("unexpected keys:")
         print(u)
 
-    model.cuda()
+    model
     model.eval()
     return model
 
@@ -319,7 +319,7 @@ def main():
 
     config = OmegaConf.load(f"{opt.config}")
     model = load_model_from_config(config, f"{opt.ckpt}")
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    device = torch.device("cpu") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
 
     if opt.facesr:

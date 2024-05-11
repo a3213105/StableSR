@@ -505,9 +505,9 @@ if __name__ == '__main__':
     cv2.imwrite('cv2_JPEG_20.png', img_lq)
 
     # -------------- DiffJPEG -------------- #
-    jpeger = DiffJPEG(differentiable=False).cuda()
+    jpeger = DiffJPEG(differentiable=False)
     img_gt = img2tensor(img_gt)
-    img_gt = torch.stack([img_gt, img_gt]).cuda()
+    img_gt = torch.stack([img_gt, img_gt])
     quality = img_gt.new_tensor([20, 40])
     out = jpeger(img_gt, quality=quality)
 
