@@ -409,6 +409,12 @@ def main():
 			t6 = time.time()
 			print(f"##### {t1-t0}, {t2-t1}, {t3-t2}, {t4-t3}, {t5-t4}, {t6-t5}")
 
+		
+			img_name = img_list[n]
+			basename = os.path.splitext(os.path.basename(img_name))[0]
+			x_sample = 255. * rearrange(x_samples[0].cpu().numpy(), 'c h w -> h w c')
+			Image.fromarray(x_sample.astype(np.uint8)).save(os.path.join(outpath, basename+'.png'))
+		
 		times = []
 		tic = time.time()
 		for loop in range(opt.loop):
@@ -466,11 +472,7 @@ def main():
 			t0 += it[0]
 			t1 += it[3]
 			t2 += it[4]
-		for i in range(init_image.size(0)):
-			img_name = img_list.pop(0)
-			basename = os.path.splitext(os.path.basename(img_name))[0]
-			x_sample = 255. * rearrange(x_samples[i].cpu().numpy(), 'c h w -> h w c')
-			# Image.fromarray(x_sample.astype(np.uint8)).save(os.path.join(outpath, basename+'.png'))
+
 
 	print(f"Your samples are ready and waiting for you here: \n{outpath} \n"
 		  f" \nEnjoy.")

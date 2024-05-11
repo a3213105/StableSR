@@ -71,7 +71,7 @@ class OV_Operator(object):
         self.outputs = []
         for i in range (0,output_size):
             self.outputs.append(i)
-        print('output: {}'.format(len(self.outputs)))
+        # print('output: {}'.format(len(self.outputs)))
         self.input_names = []
         self.input_shapes = []
         ops = self.model.get_ordered_ops()
@@ -87,14 +87,14 @@ class OV_Operator(object):
             new_shapes = {}
             for i in range(len(shapes)) :
                 new_shapes[self.input_names[i]] = shapes[i]
-            print('Reshaping model: {}'.format(', '.join("'{}': {}".format(k, str(v)) for k, v in new_shapes.items())))
+            # print('Reshaping model: {}'.format(', '.join("'{}': {}".format(k, str(v)) for k, v in new_shapes.items())))
             self.model.reshape(new_shapes)
-
-        print_inputs_and_outputs_info(self.model)
         config = self.prepare_for_cpu(stream_num, bf16)
         self.exec_net = self.core.compile_model(self.model, 'CPU', config)
+        print_inputs_and_outputs_info(self.model)
         print_runtime_params(self.exec_net)
-        self.infer_queue = AsyncInferQueue(self.exec_net, stream_num)
+        self.num_requests = self.exec_net.get_property("OPTIMAL_NUMBER_OF_INFER_REQUESTS")
+        self.infer_queue = AsyncInferQueue(self.exec_net, self.num_requests)
         self.num_requests = len(self.infer_queue)
         self.request = None
         print('Model ({})  using {} streams'.format(self.model.get_friendly_name(), self.num_requests))
