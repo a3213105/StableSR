@@ -2543,12 +2543,22 @@ class LatentDiffusionSRTextWT(DDPM):
         return loss, loss_dict
 
     def p_mean_variance(self, x, c, struct_cond, t, clip_denoised: bool, return_codebook_ids=False, quantize_denoised=False,
-                        return_x0=False, score_corrector=None, corrector_kwargs=None, t_replace=None):
+                        return_x0=False, score_corrector=None, corrector_kwargs=None, t_replace=None, unconditional_conditioning=None, unconditional_guidance_scale=None,
+                        reference_sr=None, reference_lr=0.05, reference_step=1, reference_range=[100, 1000]):
         if t_replace is None:
             t_in = t
         else:
             t_in = t_replace
-        model_out = self.apply_model(x, t_in, c, struct_cond, return_ids=return_codebook_ids)
+
+        if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
+            model_out = self.apply_model(x, t_in, c, struct_cond, return_ids=return_codebook_ids)
+        else:
+            x_in = torch.cat([x] * 2)
+            t_in_ = torch.cat([t_in] * 2)
+            c_in = torch.cat([unconditional_conditioning, c])
+            e_t_uncond, e_t = self.apply_model(x_in, t_in_, c_in, struct_cond, return_ids=False).chunk(2)
+            model_out = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+            return_codebook_ids=False
 
         if score_corrector is not None:
             assert self.parameterization == "eps"
@@ -2566,6 +2576,25 @@ class LatentDiffusionSRTextWT(DDPM):
         else:
             raise NotImplementedError()
 
+        if reference_sr is not None:
+            # apply reference guidance
+            if t[0] >= reference_range[0] and t[0] <= reference_range[1]:
+                xstart_current = x_recon.detach().clone().requires_grad_(True)
+                xstart_pred = x_recon.detach().clone().requires_grad_(False)
+                for _ in range(reference_step):
+                    with torch.enable_grad():
+                        tau0 = torch.ones_like(xstart_current) * reference_lr
+                        mask = torch.ones_like(xstart_current)
+                        tau0 = tau0*mask
+                        delta_y = torch.square(reference_sr - xstart_current).sum() / reference_sr.shape[0]
+                        gradient = torch.autograd.grad(delta_y, xstart_current)[0] * tau0
+                        assert not torch.isnan(gradient).any()
+                        new_xstart = (
+                            xstart_current.float().detach() - gradient.float()
+                        )
+                    xstart_current = new_xstart.detach().requires_grad_(True)
+                x_recon = xstart_current.detach().clone()
+
         if clip_denoised:
             x_recon.clamp_(-1., 1.)
         if quantize_denoised:
@@ -2579,10 +2608,9 @@ class LatentDiffusionSRTextWT(DDPM):
             return model_mean, posterior_variance, posterior_log_variance
 
     def p_mean_variance_canvas(self, x, c, struct_cond, t, clip_denoised: bool, return_codebook_ids=False, quantize_denoised=False,
-                        return_x0=False, score_corrector=None, corrector_kwargs=None, t_replace=None, tile_size=64, tile_overlap=32, batch_size=4, tile_weights=None):
-        """
-        Aggregation Sampling strategy for arbitrary-size image super-resolution
-        """
+                        return_x0=False, score_corrector=None, corrector_kwargs=None, t_replace=None, tile_size=64, tile_overlap=32, batch_size=4, tile_weights=None,
+                        unconditional_conditioning=None, unconditional_guidance_scale=None,
+                        reference_sr=None, reference_lr=0.05, reference_step=1, reference_range=[100, 1000]):
         assert tile_weights is not None
 
         if t_replace is None:
@@ -2639,26 +2667,23 @@ class LatentDiffusionSRTextWT(DDPM):
                 cond_tile = struct_cond[:, :, input_start_y:input_end_y, input_start_x:input_end_x]
                 cond_list.append(cond_tile)
 
-            #     if len(input_list) == batch_size or col == grid_cols-1:
-            #         input_list = torch.cat(input_list, dim=0)
-            #         cond_list = torch.cat(cond_list, dim=0)
+######################
+                # if len(input_list) == batch_size or col == grid_cols-1:
+                #     input_list = torch.cat(input_list, dim=0)
+                #     cond_list = torch.cat(cond_list, dim=0)
 
-            #         struct_cond_input = self.structcond_stage_model(cond_list, t_in[:input_list.size(0)])
-            #         model_out = self.apply_model(input_list, t_in[:input_list.size(0)], c[:input_list.size(0)], struct_cond_input, return_ids=return_codebook_ids)
-
-            #         if score_corrector is not None:
-            #             assert self.parameterization == "eps"
-            #             model_out = score_corrector.modify_score(self, model_out, input_list, t[:input_list.size(0)], c[:input_list.size(0)], **corrector_kwargs)
-
-            #         if return_codebook_ids:
-            #             model_out, logits = model_out
-
-            #         for sample_i in range(model_out.size(0)):
-            #             noise_preds_row.append(model_out[sample_i].unsqueeze(0))
-            #         input_list = []
-            #         cond_list = []
-
-            # noise_preds.append(noise_preds_row)
+                #     if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
+                #         struct_cond_input = self.structcond_stage_model(cond_list, t_in[:input_list.size(0)])
+                #         model_out = self.apply_model(input_list, t_in[:input_list.size(0)], c[:input_list.size(0)], struct_cond_input, return_ids=return_codebook_ids)
+                #     else:
+                #         input_list_ = torch.cat([input_list] * 2)
+                #         t_in_ = torch.cat([t_in[:input_list.size(0)]] * 2)
+                #         struct_cond_input = self.structcond_stage_model(torch.cat([cond_list] * 2), t_in_)
+                #         c_in = torch.cat([unconditional_conditioning[:input_list.size(0)], c[:input_list.size(0)]])
+                #         e_t_uncond, e_t = self.apply_model(input_list_, t_in_, c_in, struct_cond_input, return_ids=False).chunk(2)
+                #         model_out = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+                #         return_codebook_ids=False
+########################
 
         input_list = torch.cat(input_list, dim=0)
         cond_list = torch.cat(cond_list, dim=0)
@@ -2667,19 +2692,6 @@ class LatentDiffusionSRTextWT(DDPM):
         else :
             noise_preds_row = self.forward_ov(input_list, cond_list, t_in, c)
         
-        # struct_cond_input = self.structcond_stage_model(cond_list, t_in[:input_list.size(0)])
-        # model_out = self.apply_model(input_list, t_in[:input_list.size(0)], c[:input_list.size(0)], struct_cond_input, return_ids=return_codebook_ids)
-        
-        # if score_corrector is not None:
-        #     assert self.parameterization == "eps"
-        #     model_out = score_corrector.modify_score(self, model_out, input_list, t[:input_list.size(0)], c[:input_list.size(0)], **corrector_kwargs)
-
-        # if return_codebook_ids:
-        #     model_out, logits = model_out
-
-        # for sample_i in range(model_out.size(0)):
-        #     noise_preds_row.append(model_out[sample_i].unsqueeze(0))
-
         input_list = []
         cond_list = []
 
@@ -2709,6 +2721,7 @@ class LatentDiffusionSRTextWT(DDPM):
                 # noise_pred[:, :, input_start_y:input_end_y, input_start_x:input_end_x] += noise_preds[row][col] * tile_weights
                 noise_pred[:, :, input_start_y:input_end_y, input_start_x:input_end_x] += noise_preds_row[row*grid_cols+col] * tile_weights
                 contributors[:, :, input_start_y:input_end_y, input_start_x:input_end_x] += tile_weights
+                # contributors[:, :, input_start_y:input_end_y, input_start_x:input_end_x] += tile_weights * tile_weights
         # Average overlapping areas with more than 1 contributor
         noise_pred /= contributors
         # noise_pred /= torch.sqrt(contributors)
@@ -2722,6 +2735,25 @@ class LatentDiffusionSRTextWT(DDPM):
             x_recon = self.predict_start_from_z_and_v(x, model_out, t[:model_out.size(0)])
         else:
             raise NotImplementedError()
+
+        if reference_sr is not None:
+            # apply reference guidance
+            if t[0] >= reference_range[0] and t[0] <= reference_range[1]:
+                xstart_current = x_recon.detach().clone().requires_grad_(True)
+                xstart_pred = x_recon.detach().clone().requires_grad_(False)
+                for _ in range(reference_step):
+                    with torch.enable_grad():
+                        tau0 = torch.ones_like(xstart_current) * reference_lr
+                        mask = torch.ones_like(xstart_current)
+                        tau0 = tau0*mask
+                        delta_y = torch.square(reference_sr - xstart_current).sum() / reference_sr.shape[0]
+                        gradient = torch.autograd.grad(delta_y, xstart_current)[0] * tau0
+                        assert not torch.isnan(gradient).any()
+                        new_xstart = (
+                            xstart_current.float().detach() - gradient.float()
+                        )
+                    xstart_current = new_xstart.detach().requires_grad_(True)
+                x_recon = xstart_current.detach().clone()
 
         if clip_denoised:
             x_recon.clamp_(-1., 1.)
@@ -2739,15 +2771,17 @@ class LatentDiffusionSRTextWT(DDPM):
     @torch.no_grad()
     def p_sample(self, x, c, struct_cond, t, clip_denoised=False, repeat_noise=False,
                  return_codebook_ids=False, quantize_denoised=False, return_x0=False,
-                 temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None, t_replace=None):
+                 temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None, t_replace=None,
+                 unconditional_conditioning=None, unconditional_guidance_scale=None,
+                 reference_sr=None, reference_lr=0.05, reference_step=1, reference_range=[100, 1000]):
         b, *_, device = *x.shape, x.device
         outputs = self.p_mean_variance(x=x, c=c, struct_cond=struct_cond, t=t, clip_denoised=clip_denoised,
                                        return_codebook_ids=return_codebook_ids,
                                        quantize_denoised=quantize_denoised,
                                        return_x0=return_x0,
-                                       score_corrector=score_corrector, corrector_kwargs=corrector_kwargs, t_replace=t_replace)
-        #import pdb
-        #pdb.set_trace()
+                                       score_corrector=score_corrector, corrector_kwargs=corrector_kwargs, t_replace=t_replace,
+                                       unconditional_conditioning=unconditional_conditioning, unconditional_guidance_scale=unconditional_guidance_scale,
+                                       reference_sr=reference_sr, reference_lr=reference_lr, reference_step=reference_step, reference_range=reference_range)
         if return_codebook_ids:
             raise DeprecationWarning("Support dropped.")
             model_mean, _, model_log_variance, logits = outputs
@@ -2773,14 +2807,17 @@ class LatentDiffusionSRTextWT(DDPM):
     def p_sample_canvas(self, x, c, struct_cond, t, clip_denoised=False, repeat_noise=False,
                  return_codebook_ids=False, quantize_denoised=False, return_x0=False,
                  temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None, t_replace=None,
-                 tile_size=64, tile_overlap=32, batch_size=4, tile_weights=None):
+                 tile_size=64, tile_overlap=32, batch_size=4, tile_weights=None, unconditional_conditioning=None, unconditional_guidance_scale=None,
+                 reference_sr=None, reference_lr=0.05, reference_step=1, reference_range=[100, 1000]):
         b, *_, device = *x.shape, x.device
         outputs = self.p_mean_variance_canvas(x=x, c=c, struct_cond=struct_cond, t=t, clip_denoised=clip_denoised,
                                        return_codebook_ids=return_codebook_ids,
                                        quantize_denoised=quantize_denoised,
                                        return_x0=return_x0,
                                        score_corrector=score_corrector, corrector_kwargs=corrector_kwargs, t_replace=t_replace,
-                                       tile_size=tile_size, tile_overlap=tile_overlap, batch_size=batch_size, tile_weights=tile_weights)
+                                       tile_size=tile_size, tile_overlap=tile_overlap, batch_size=batch_size, tile_weights=tile_weights,
+                                       unconditional_conditioning=unconditional_conditioning, unconditional_guidance_scale=unconditional_guidance_scale,
+                                       reference_sr=reference_sr, reference_lr=reference_lr, reference_step=reference_step, reference_range=reference_range)
         if return_codebook_ids:
             raise DeprecationWarning("Support dropped.")
             model_mean, _, model_log_variance, logits = outputs
@@ -2862,7 +2899,10 @@ class LatentDiffusionSRTextWT(DDPM):
     def p_sample_loop(self, cond, struct_cond, shape, return_intermediates=False,
                       x_T=None, verbose=True, callback=None, timesteps=None, quantize_denoised=False,
                       mask=None, x0=None, img_callback=None, start_T=None,
-                      log_every_t=None, time_replace=None, adain_fea=None, interfea_path=None, bf16=False):
+                      log_every_t=None, time_replace=None, adain_fea=None, interfea_path=None,
+                      unconditional_conditioning=None,
+                      unconditional_guidance_scale=None,
+                      reference_sr=None, reference_lr=0.05, reference_step=1, reference_range=[100, 1000]):
 
         if not log_every_t:
             log_every_t = self.log_every_t
@@ -2924,7 +2964,10 @@ class LatentDiffusionSRTextWT(DDPM):
             #pdb.set_trace()
             img = self.p_sample(img, cond, struct_cond_input, ts,
                                 clip_denoised=self.clip_denoised,
-                                quantize_denoised=quantize_denoised, t_replace=t_replace)
+                                quantize_denoised=quantize_denoised, t_replace=t_replace,
+                                unconditional_conditioning=unconditional_conditioning,
+                                unconditional_guidance_scale=unconditional_guidance_scale,
+                                reference_sr=reference_sr, reference_lr=reference_lr, reference_step=reference_step, reference_range=reference_range)
 
             if adain_fea is not None:
                 if i < 1:
@@ -2988,7 +3031,9 @@ class LatentDiffusionSRTextWT(DDPM):
     def p_sample_loop_canvas(self, cond, struct_cond, shape, return_intermediates=False,
                       x_T=None, verbose=True, callback=None, timesteps=None, quantize_denoised=False,
                       mask=None, x0=None, img_callback=None, start_T=None,
-                      log_every_t=None, time_replace=None, adain_fea=None, interfea_path=None, tile_size=64, tile_overlap=32, batch_size=4):
+                      log_every_t=None, time_replace=None, adain_fea=None, interfea_path=None, tile_size=64, tile_overlap=32, batch_size=4,
+                      unconditional_conditioning=None, unconditional_guidance_scale=None,
+                      reference_sr=None, reference_lr=0.05, reference_step=1, reference_range=[100, 1000],):
 
         assert tile_size is not None
 
@@ -3041,7 +3086,9 @@ class LatentDiffusionSRTextWT(DDPM):
             img = self.p_sample_canvas(img, cond, struct_cond, ts,
                                 clip_denoised=self.clip_denoised,
                                 quantize_denoised=quantize_denoised, t_replace=t_replace,
-                                tile_size=tile_size, tile_overlap=tile_overlap, batch_size=batch_size, tile_weights=tile_weights)
+                                tile_size=tile_size, tile_overlap=tile_overlap, batch_size=batch_size, tile_weights=tile_weights,
+                                unconditional_conditioning=unconditional_conditioning, unconditional_guidance_scale=unconditional_guidance_scale,
+                                reference_sr=reference_sr, reference_lr=reference_lr, reference_step=reference_step, reference_range=reference_range,)
 
             if adain_fea is not None:
                 if i < 1:
@@ -3062,7 +3109,11 @@ class LatentDiffusionSRTextWT(DDPM):
     @torch.no_grad()
     def sample(self, cond, struct_cond, batch_size=16, return_intermediates=False, x_T=None,
                verbose=True, timesteps=None, quantize_denoised=False,
-               mask=None, x0=None, shape=None, time_replace=None, adain_fea=None, interfea_path=None, start_T=None, **kwargs):
+               mask=None, x0=None, shape=None, time_replace=None, adain_fea=None, interfea_path=None, start_T=None,
+               unconditional_conditioning=None,
+               unconditional_guidance_scale=None,
+               reference_sr=None, reference_lr=0.05, reference_step=1, reference_range=[100, 1000],
+               **kwargs):
 
         if shape is None:
             shape = (batch_size, self.channels, self.image_size//8, self.image_size//8)
@@ -3081,12 +3132,16 @@ class LatentDiffusionSRTextWT(DDPM):
                                   shape,
                                   return_intermediates=return_intermediates, x_T=x_T,
                                   verbose=verbose, timesteps=timesteps, quantize_denoised=quantize_denoised,
-                                  mask=mask, x0=x0, time_replace=time_replace, adain_fea=adain_fea, interfea_path=interfea_path, start_T=start_T, bf16 = bf16)
+                                  mask=mask, x0=x0, time_replace=time_replace, adain_fea=adain_fea, interfea_path=interfea_path, start_T=start_T,
+                                  unconditional_conditioning=unconditional_conditioning,
+                                  unconditional_guidance_scale=unconditional_guidance_scale,
+                                  reference_sr=reference_sr, reference_lr=reference_lr, reference_step=reference_step, reference_range=reference_range)
 
     @torch.no_grad()
     def sample_canvas(self, cond, struct_cond, batch_size=16, return_intermediates=False, x_T=None,
                verbose=True, timesteps=None, quantize_denoised=False,
-               mask=None, x0=None, shape=None, time_replace=None, adain_fea=None, interfea_path=None, tile_size=64, tile_overlap=32, batch_size_sample=4, log_every_t=None, **kwargs):
+               mask=None, x0=None, shape=None, time_replace=None, adain_fea=None, interfea_path=None, tile_size=64, tile_overlap=32, batch_size_sample=4, log_every_t=None,
+               unconditional_conditioning=None, unconditional_guidance_scale=None, **kwargs):
 
         if shape is None:
             shape = (batch_size, self.channels, self.image_size//8, self.image_size//8)
@@ -3101,7 +3156,8 @@ class LatentDiffusionSRTextWT(DDPM):
                                   shape,
                                   return_intermediates=return_intermediates, x_T=x_T,
                                   verbose=verbose, timesteps=timesteps, quantize_denoised=quantize_denoised,
-                                  mask=mask, x0=x0, time_replace=time_replace, adain_fea=adain_fea, interfea_path=interfea_path, tile_size=tile_size, tile_overlap=tile_overlap, batch_size=batch_size_sample, log_every_t=log_every_t)
+                                  mask=mask, x0=x0, time_replace=time_replace, adain_fea=adain_fea, interfea_path=interfea_path, tile_size=tile_size, tile_overlap=tile_overlap,
+                                  unconditional_conditioning=unconditional_conditioning, unconditional_guidance_scale=unconditional_guidance_scale, batch_size=batch_size_sample, log_every_t=log_every_t)
 
     @torch.no_grad()
     def sample_log(self,cond,struct_cond,batch_size,ddim, ddim_steps,**kwargs):
@@ -3262,6 +3318,83 @@ class LatentDiffusionSRTextWT(DDPM):
         x = nn.functional.conv2d(x, weight=self.colorize)
         x = 2. * (x - x.min()) / (x.max() - x.min()) - 1.
         return x
+
+class LatentDiffusionSRTextWTFFHQ(LatentDiffusionSRTextWT):
+
+    @torch.no_grad()
+    def get_input(self, batch, k=None, return_first_stage_outputs=False, force_c_encode=False,
+                  cond_key=None, return_original_cond=False, bs=None, val=False, text_cond=[''], return_gt=False, resize_lq=True):
+
+        im_gt = batch['gt'].cuda()
+        im_gt = im_gt.to(memory_format=torch.contiguous_format).float()
+        im_lq = batch['lq'].cuda()
+        im_lq = im_lq.to(memory_format=torch.contiguous_format).float()
+
+        # clamp and round
+        im_lq = torch.clamp(im_lq, 0, 1.0)
+
+        self.gt = im_gt
+        self.lq = im_lq
+
+        if resize_lq:
+            self.lq = F.interpolate(
+                    self.lq,
+                    size=(self.gt.size(-2),
+                          self.gt.size(-1)),
+                    mode='bicubic',
+                    )
+
+        # training pair pool
+        if not val and not self.random_size:
+            self._dequeue_and_enqueue()
+        # sharpen self.gt again, as we have changed the self.gt with self._dequeue_and_enqueue
+        self.lq = self.lq.contiguous()  # for the warning: grad and param do not obey the gradient layout contract
+        self.lq = self.lq*2 - 1.0
+        self.gt = self.gt*2 - 1.0
+
+        if self.random_size:
+            self.lq, self.gt = self.randn_cropinput(self.lq, self.gt)
+
+        self.lq = torch.clamp(self.lq, -1.0, 1.0)
+
+        if random.random() < 0.005:
+            self.lq = self.gt
+
+        x = self.lq
+        y = self.gt
+        if bs is not None:
+            x = x[:bs]
+            y = y[:bs]
+        x = x.to(self.device)
+        y = y.to(self.device)
+        encoder_posterior = self.encode_first_stage(x)
+        z = self.get_first_stage_encoding(encoder_posterior).detach()
+
+        encoder_posterior_y = self.encode_first_stage(y)
+        z_gt = self.get_first_stage_encoding(encoder_posterior_y).detach()
+
+        xc = None
+        if self.use_positional_encodings:
+            assert NotImplementedError
+            pos_x, pos_y = self.compute_latent_shifts(batch)
+            c = {'pos_x': pos_x, 'pos_y': pos_y}
+
+        while len(text_cond) < z.size(0):
+            text_cond.append(text_cond[-1])
+        if len(text_cond) > z.size(0):
+            text_cond = text_cond[:z.size(0)]
+        assert len(text_cond) == z.size(0)
+
+        out = [z, text_cond]
+        out.append(z_gt)
+
+        if return_first_stage_outputs:
+            xrec = self.decode_first_stage(z_gt)
+            out.extend([x, self.gt, xrec])
+        if return_original_cond:
+            out.append(xc)
+
+        return out
 
 class DiffusionWrapper(pl.LightningModule):
     def __init__(self, diff_model_config, conditioning_key):
