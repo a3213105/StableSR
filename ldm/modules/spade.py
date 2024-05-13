@@ -90,7 +90,7 @@ class SPADE(nn.Module):
     def forward(self, x_dic, segmap_dic, size=None):
 
         if size is None:
-            segmap = segmap_dic[str(x_dic.size(-1))]
+            segmap = segmap_dic[str(int(x_dic.size(-1)))]
             x = x_dic
         else:
             x = x_dic[str(size)]
