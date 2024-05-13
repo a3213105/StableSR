@@ -410,26 +410,31 @@ def main():
 			all_perf_time.append(process_pictures(model, vq_model, img_list, init_image_list, opt, 
                                          sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod))
 		toc = time.time()
-		first_stage = 0.0
-		cond_stage = 0.0
-		sample_canvas = 0.0
-		vqmodel = 0.0
-		colorfix = 0.0
+		# first_stage = 0.0
+		# cond_stage = 0.0
+		# sample_canvas = 0.0
+		# vqmodel = 0.0
+		# colorfix = 0.0
+		total = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ]
 		for its in all_perf_time:
 			for it in its:
-				first_stage += it[1]
-				cond_stage += it[2]
-				sample_canvas += it[4]
-				vqmodel += it[5]
-				colorfix += it[6]
+				for i in range(len(it)) :
+					total[i] += it[i]
 		total_size = opt.loop * len(init_image_list)
-		first_stage = first_stage / total_size
-		cond_stage = cond_stage / total_size
-		sample_canvas = sample_canvas / total_size
-		vqmodel = vqmodel / total_size
-		colorfix = colorfix / total_size
+		for i in range(7) :
+			total[i] /= total_size
+		total_time = (toc - tic) / total_size
+		# first_stage = first_stage / total_size
+		# cond_stage = cond_stage / total_size
+		# sample_canvas = sample_canvas / total_size
+		# vqmodel = vqmodel / total_size
+		# colorfix = colorfix / total_size
 		# print(f"image {total_size}, total={(toc-tic)/opt.loop}, first_stage={first_stage}, cond_stage={cond_stage}, sample_canvas={sample_canvas}, vqmodel={vqmodel}, colorfix={colorfix}")
-		print("##### total time {0:8.4f} s, first_stage={1:8.4f}, cond_stage={2:8.4f}, sample_canvas={3:8.4f}, colorfix={4:8.4f}".format((toc - tic) / opt.loop, first_stage, cond_stage, sample_canvas, vqmodel, colorfix ))
+		# print(f"##### total time {0:8.4f} s, ddpm_steps={1:d} preprocess={} first_stage={2:8.4f}, cond_stage={3:8.4f}, sample_canvas={4:8.4f}, vqgan={5:8.4f}, colorfix={5:8.4f}".format(
+      	# 		total_time, opt.ddpm_steps, total[0], total[1], total[2], total[3], total[4], total[5], total[6] ))
+		print(f"##### total time {total_time:8.4f} s, ddpm_steps={opt.ddpm_steps}, preprocess={total[0]:.4f}, \
+first_stage={total[1]:.4f}, cond_stage={total[2]:.4f}, prepare={total[3]:.4f}, sample_canvas={total[4]:.4f}, \
+vqgan={total[5]:.4f}, colorfix={total[6]:.4f}")
 
 if __name__ == "__main__":
 	main()
