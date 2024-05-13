@@ -112,11 +112,11 @@ def load_img(path):
 	image = torch.from_numpy(image)
 	return 2.*image - 1.
 
-def process_pictures(model, vq_model, init_image_list, save_output):
-    perf_time = []
+def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, outpath = None):
+	perf_time = []
 	for n in trange(len(init_image_list), desc="Sampling"):
-        t0 = time.time()
-        init_image = init_image_list[n]
+		t0 = time.time()
+		init_image = init_image_list[n]
 		init_image = init_image.clamp(-1.0, 1.0)
 		ori_size = None
 
@@ -128,47 +128,43 @@ def process_pictures(model, vq_model, init_image_list, save_output):
 			init_template[:, :, :ori_size[-2], :ori_size[-1]] = init_image
 		else:
 			init_template = init_image
-        t1 = time.time()
+		t1 = time.time()
 		init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_template))  
-        t2 = time.time()
+		t2 = time.time()
         # move to latent space
 		text_init = ['']*opt.n_samples
 		semantic_c = model.cond_stage_model(text_init)
-        t3 = time.time()
+		t3 = time.time()
 		noise = torch.randn_like(init_latent)
 		# If you would like to start from the intermediate steps, you can add noise to LR to the specific steps.
 		t = repeat(torch.tensor([999]), '1 -> b', b=init_image.size(0))
-		t = t.to(device).long()
+		t = t.long()
 		x_T = model.q_sample_respace(x_start=init_latent, t=t, sqrt_alphas_cumprod=sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod=sqrt_one_minus_alphas_cumprod, noise=noise)
-        t4 = time.time()
+		t4 = time.time()
 		samples, _ = model.sample_canvas(cond=semantic_c, struct_cond=init_latent, batch_size=init_image.size(0), timesteps=opt.ddpm_steps, time_replace=opt.ddpm_steps, x_T=x_T, return_intermediates=True, tile_size=int(opt.input_size/8), tile_overlap=opt.tile_overlap, batch_size_sample=opt.n_samples)
-        t5 = time.time()
-        _, enc_fea_lq = vq_model.encode(init_template)
+		t5 = time.time()
+		_, enc_fea_lq = vq_model.encode(init_template)
 		x_samples = vq_model.decode(samples * 1. / model.scale_factor, enc_fea_lq)
 		t6 = time.time()
-        if ori_size is not None:
+		if ori_size is not None:
 			x_samples = x_samples[:, :, :ori_size[-2], :ori_size[-1]]
 		if opt.colorfix_type == 'adain':
 			x_samples = adaptive_instance_normalization(x_samples, init_image)
 		elif opt.colorfix_type == 'wavelet':
 			x_samples = wavelet_reconstruction(x_samples, init_image)
 		x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
-        t7 = time.time()
-        if save_output :
-            for i in range(init_image.size(0)):
-                img_name = img_list.pop(0)
-                basename = os.path.splitext(os.path.basename(img_name))[0]
-                x_sample = 255. * rearrange(x_samples[i].cpu().numpy(), 'c h w -> h w c')
-                Image.fromarray(x_sample.astype(np.uint8)).save(
-                    os.path.join(outpath, basename+'_hq.png'))
-                init_image = torch.clamp((init_image + 1.0) / 2.0, min=0.0, max=1.0)
-                init_image = 255. * rearrange(init_image[i].cpu().numpy(), 'c h w -> h w c')
-                Image.fromarray(init_image.astype(np.uint8)).save(
-							os.path.join(outpath, basename+'_lq.png'))
-        perf_time.append([t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t6-t5, t7-t6])
-    return perf_time
-        
-
+		t7 = time.time()
+		if outpath != None :
+			for i in range(init_image.size(0)):
+				img_name = img_list.pop(0)
+				basename = os.path.splitext(os.path.basename(img_name))[0]
+				x_sample = 255. * rearrange(x_samples[i].cpu().numpy(), 'c h w -> h w c')
+				Image.fromarray(x_sample.astype(np.uint8)).save(os.path.join(outpath, basename+'_hq.png'))
+				init_image = torch.clamp((init_image + 1.0) / 2.0, min=0.0, max=1.0)
+				init_image = 255. * rearrange(init_image[i].cpu().numpy(), 'c h w -> h w c')
+				Image.fromarray(init_image.astype(np.uint8)).save(os.path.join(outpath, basename+'_lq.png'))
+		perf_time.append([t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t6-t5, t7-t6])
+	return perf_time
 
 def main():
 	parser = argparse.ArgumentParser()
@@ -341,8 +337,7 @@ def main():
 
 	vqgan_config = OmegaConf.load("configs/autoencoder/autoencoder_kl_64x64x4_resi.yaml")
 	vq_model = load_model_from_config(vqgan_config, opt.vqgan_ckpt)
-
-    vq_model = vq_model.eval()
+	vq_model = vq_model.eval()
 
 	if opt.bf16 == True:
 		vq_model = vq_model.to(torch.bfloat16)
@@ -405,35 +400,36 @@ def main():
 	with torch.no_grad(), torch.cpu.amp.autocast(enabled=opt.bf16, dtype=torch.bfloat16):
 		print(f"img size={len(init_image_list)}, loop={opt.loop}, shape={init_image_list[0].size()}")
 		###warm up
-        perf_time = process_pictures(mode, vqmodel, init_image_list, True)
-        print(f"{perf_time[0]}")
+		perf_time = process_pictures(model, vq_model, img_list, init_image_list, opt, 
+                               sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, outpath)
+		print(f"{perf_time[0]}")
         ### benchmark
-        all_perf_time = []
-        tic = time.time()
-        for i in range(opt.loops) :
-            all_perf_time.append(process_pictures(mode, vqmodel, init_image_list, False))
+		all_perf_time = []
+		tic = time.time()
+		for i in range(opt.loop) :
+			all_perf_time.append(process_pictures(model, vq_model, img_list, init_image_list, opt, 
+                                         sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod))
 		toc = time.time()
-        first_stage = 0.0
-        cond_stage = 0.0
-        sample_canvas = 0.0
-        vqmodel = 0.0
-        colorfix = 0.0
-        for its in all_perf_time:
-            for it in its:
-                first_stage += it[1]
-                cond_stage += it[2]
-                sample_canvas += it[4]
-                vqmodel += it[5]
-                colorfix += it[6]
-        total_size = opt.loops * len(init_image_list)
-        first_stage = first_stage / total_size
-        cond_stage = cond_stage / total_size
-        sample_canvas = sample_canvas / total_size
-        vqmodel = vqmodel / total_size
-        colorfix = colorfix / total_size
-
-        print(f"image {total_size}, total={(toc-tic)/opt.loops}, first_stage={first_stage}, cond_stage={cond_stage}, sample_canvas={sample_canvas}, vqmodel={vqmodel}, colorfix={colorfix}")
-
+		first_stage = 0.0
+		cond_stage = 0.0
+		sample_canvas = 0.0
+		vqmodel = 0.0
+		colorfix = 0.0
+		for its in all_perf_time:
+			for it in its:
+				first_stage += it[1]
+				cond_stage += it[2]
+				sample_canvas += it[4]
+				vqmodel += it[5]
+				colorfix += it[6]
+		total_size = opt.loop * len(init_image_list)
+		first_stage = first_stage / total_size
+		cond_stage = cond_stage / total_size
+		sample_canvas = sample_canvas / total_size
+		vqmodel = vqmodel / total_size
+		colorfix = colorfix / total_size
+		# print(f"image {total_size}, total={(toc-tic)/opt.loop}, first_stage={first_stage}, cond_stage={cond_stage}, sample_canvas={sample_canvas}, vqmodel={vqmodel}, colorfix={colorfix}")
+		print("##### total time {0:8.4f} s, first_stage={1:8.4f}, cond_stage={2:8.4f}, sample_canvas={3:8.4f}, colorfix={4:8.4f}".format((toc - tic) / opt.loop, first_stage, cond_stage, sample_canvas, vqmodel, colorfix ))
 
 if __name__ == "__main__":
 	main()
