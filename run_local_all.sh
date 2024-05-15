@@ -15,6 +15,5 @@ export no_proxy="localhost, 127.0.0.1, ::1, 127.0.0.1:7860, 127.0.0.1:7861, 127.
 CORES=`lscpu | grep "per socket" | awk {'print $4'}`
 for cc in ${CORES} #24 16
 do
-    export OMP_NUM_THREADS=${cc} 
-    bash ./run_local2.sh 
+    bash ./run_local2.sh ${cc}
 done

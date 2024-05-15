@@ -1705,7 +1705,7 @@ class LatentDiffusionSRTextWT(DDPM):
             
         try:
             self.ov_fs_processor = FirstStageProcessor(config.params.first_stage_xml_path)
-            shapes = [[1,3,-1,-1]]           
+            shapes = [[1,3,2048,2048]]           
             self.ov_fs_processor.setup_model(stream_num = 1, bf16=True, shapes = shapes)
 
         except Exception as e:
