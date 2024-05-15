@@ -146,8 +146,9 @@ def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alpha
 		t4 = time.time()
 		samples, _ = model.sample_canvas(cond=semantic_c, struct_cond=init_latent, batch_size=init_image.size(0), timesteps=opt.ddpm_steps, time_replace=opt.ddpm_steps, x_T=x_T, return_intermediates=True, tile_size=int(opt.input_size/8), tile_overlap=opt.tile_overlap, batch_size_sample=opt.n_samples)
 		t5 = time.time()
-		_, enc_fea_lq = vq_model.encode(init_template)
-		x_samples = vq_model.decode(samples * 1. / model.scale_factor, enc_fea_lq)
+		# _, enc_fea_lq = vq_model.encode(init_template)
+		# x_samples = vq_model.decode(samples * 1. / model.scale_factor, enc_fea_lq)
+		x_samples = vq_model(init_template, samples * 1. / model.scale_factor)
 		t6 = time.time()
 		print(f"##### init_template={init_template.shape}, samples={samples.shape}, x_samples={x_samples.shape}")
 		if ori_size is not None:
