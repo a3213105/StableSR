@@ -12,7 +12,7 @@ export MALLOC_CONF="oversize_threshold:1,background_thread:true,metadata_thp:aut
 export no_proxy="localhost, 127.0.0.1, ::1, 127.0.0.1:7860, 127.0.0.1:7861, 127.0.0.1:7862"
 
 #for cc in 48 24 16 12 8 6 4
-for cc in 32 16
+for cc in 48
 do
     export OMP_NUM_THREADS=${cc} 
     bash ./run_local2.sh

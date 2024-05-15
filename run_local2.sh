@@ -28,7 +28,8 @@ function check_log() {
 function do_instance() {
     CORES=$1
     STEPS=$2
-    CMD=$3
+    LOOP=$3
+    CMD=$4
     for((c=0;c<${CORES};c+=${STEPS}))
     do
         c0=$((${c}+${CORES}))
@@ -39,24 +40,25 @@ function do_instance() {
         OMP_NUM_THREADS=${STEPS} HF_ENDPOINT=https://hf-mirror.com HF_HUB_ENABLE_HF_TRANSFER=1 \
         numactl --physcpubind=${c0}-${c1},${c2}-${c3} python scripts/sr_val_ddpm_text_T_vqganfin_oldcanvas.py \
         --config configs/stableSRNew/v2-finetune_text_T_512.yaml --ckpt stablesr_000117.ckpt \
-        --vqgan_ckpt vqgan_cfw_00011.ckpt --init-img ./input --outdir ./output/ --ddpm_steps $step \
-        --dec_w 0.5 --colorfix_type adain --upscale 2 --loop 10 ${CMD} > /tmp/${c}.log 2>&1 &
+        --vqgan_ckpt vqgan_cfw_00011.ckpt --init-img ./input --outdir ./output/ --ddpm_steps ${step} \
+        --dec_w 0.5 --colorfix_type adain --upscale 2 --loop ${LOOP} ${CMD} > /tmp/${c}.log 2>&1 &
     done
     wait
 }
 
 step=20
+loop=10
 # cmds=("--bf16" "--bf16 --ipex1")
-cmds=("--bf16 --ipex1")
+cmds=("--bf16 --ipex1" "--bf16 --ipex1 --ipex2")
 CORES=`lscpu | grep "per socket" | awk {'print $4'}`
 echo "${cmds[@]}"
 for cmd in "${cmds[@]}"
 do
     # for n in 1 2 3 4 5 6
-    for n in 2 4 8 16
+    for n in 2 4 6 8 12 16
     do
         new_cmd="--n_samples ${n} ${cmd}"
-        do_instance ${CORES} ${OMP_NUM_THREADS} "${new_cmd}"
+        do_instance ${CORES} ${OMP_NUM_THREADS} ${loop} "${new_cmd}"
         check_log ${CORES} ${OMP_NUM_THREADS} "${new_cmd}"
     done
 done

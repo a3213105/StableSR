@@ -26,6 +26,9 @@ import torch.nn.functional as F
 import cv2
 from scripts.wavelet_color_fix import wavelet_reconstruction, adaptive_instance_normalization
 
+from pathlib import Path
+import openvino as ov
+
 def space_timesteps(num_timesteps, section_counts):
 	"""
 	Create a list of timesteps to use from an original diffusion process,
@@ -88,6 +91,7 @@ def load_model_from_config(config, ckpt, verbose=False):
 	if "global_step" in pl_sd:
 		print(f"Global Step: {pl_sd['global_step']}")
 	sd = pl_sd["state_dict"]
+	print(f"Loading model from {config.model}")
 	model = instantiate_from_config(config.model)
 	m, u = model.load_state_dict(sd, strict=False)
 	if len(m) > 0 and verbose:
@@ -96,8 +100,6 @@ def load_model_from_config(config, ckpt, verbose=False):
 	if len(u) > 0 and verbose:
 		print("unexpected keys:")
 		print(u)
-
-	model
 	model.eval()
 	return model
 
@@ -146,6 +148,7 @@ def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alpha
 		_, enc_fea_lq = vq_model.encode(init_template)
 		x_samples = vq_model.decode(samples * 1. / model.scale_factor, enc_fea_lq)
 		t6 = time.time()
+		print(f"##### init_template={init_template.shape}, samples={samples.shape}, x_samples={x_samples.shape}")
 		if ori_size is not None:
 			x_samples = x_samples[:, :, :ori_size[-2], :ori_size[-1]]
 		if opt.colorfix_type == 'adain':
@@ -166,7 +169,54 @@ def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alpha
 		perf_time.append([t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t6-t5, t7-t6])
 	return perf_time
 
-def main():
+def cleanup_torchscript_cache():
+    torch._C._jit_clear_class_registry()
+    torch.jit._recursive.concrete_type_store = torch.jit._recursive.ConcreteTypeStore()
+    torch.jit._state._clear_class_state()
+
+def convert_first_stage_model(model, ir_path: Path, width: int = 1024, height: int = 1024):
+	class EncoderWrapper(torch.nn.Module):
+		def __init__(self, model):
+			super().__init__()
+			self.model = model
+		def forward(self, image):
+			return self.model.encode(x=image)
+	if not ir_path.exists():
+		encoder = EncoderWrapper(model)
+		encoder.float().eval()
+		image = torch.randn((1, 3, width, height), dtype=torch.float32)
+		with torch.no_grad():
+			dummy_output = encoder(image)
+			model_trace = torch.jit.trace(encoder, image)
+			# ov_model = ov.convert_model(model_trace, example_input=image, input=([1, 3, width, height],))
+			torch.onnx.export(model_trace, image, f'/tmp/first_stage_trace.onnx')#, example_outputs=dummy_output) 
+        # ov.save_model(ov_model, ir_path)
+        # del ov_model
+		cleanup_torchscript_cache()
+		print("first_stage_model encoder successfully converted to IR")
+
+def convert_vqgan_model(vqmodel, ir_path: str):
+	class VQGanWrapper(torch.nn.Module):
+		def __init__(self, model):
+			super().__init__()
+			self.model = model
+		def forward(self, init_template, samples):
+			_, enc_fea_lq = self.model.encode(init_template)
+			return self.model.decode(samples, enc_fea_lq)
+
+	encoder = VQGanWrapper(vqmodel)
+	encoder.float().eval()
+	image = torch.randn((1, 3, 2048, 2048), dtype=torch.float32)
+	samples = torch.randn((1, 4, 256, 256), dtype=torch.float32)
+	with torch.no_grad():
+		dummy_output = encoder(image, samples)
+		# onnx_program = torch.onnx.dynamo_export(encoder, image, samples)
+		# onnx_program.save(ir_path)
+		model_trace = torch.jit.trace(encoder, (image, samples) )
+		torch.onnx.export(model_trace, (image, samples), ir_path)#, example_outputs=dummy_output) 
+	print("first_stage_model encoder successfully converted to IR")
+  
+def init_params() :
 	parser = argparse.ArgumentParser()
 
 	parser.add_argument(
@@ -298,6 +348,10 @@ def main():
 		default=False,
 		help="enable profiler",
 	)
+	return parser
+
+def main():
+	parser = init_params()
 	opt = parser.parse_args()
 	device = torch.device("cpu") if torch.cuda.is_available() else torch.device("cpu")
 	seed_everything(opt.seed)
@@ -310,8 +364,6 @@ def main():
 	else:
 		print('No color correction')
 	print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
-
-
 
 	os.makedirs(opt.outdir, exist_ok=True)
 	outpath = opt.outdir
@@ -338,6 +390,7 @@ def main():
 	vqgan_config = OmegaConf.load("configs/autoencoder/autoencoder_kl_64x64x4_resi.yaml")
 	vq_model = load_model_from_config(vqgan_config, opt.vqgan_ckpt)
 	vq_model = vq_model.eval()
+	convert_vqgan_model(vq_model, "/tmp/vq_model.onnx")
 
 	if opt.bf16 == True:
 		vq_model = vq_model.to(torch.bfloat16)
@@ -373,6 +426,8 @@ def main():
 	model.ori_timesteps.sort()
 	model = model.to(device)
 	model = model.eval()
+	convert_first_stage_model(model.first_stage_model, Path("/tmp/first_stage_model.xml"))
+
 	if opt.bf16 == True:
 		model = model.to(torch.bfloat16)
 
@@ -410,11 +465,6 @@ def main():
 			all_perf_time.append(process_pictures(model, vq_model, img_list, init_image_list, opt, 
                                          sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod))
 		toc = time.time()
-		# first_stage = 0.0
-		# cond_stage = 0.0
-		# sample_canvas = 0.0
-		# vqmodel = 0.0
-		# colorfix = 0.0
 		total = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ]
 		for its in all_perf_time:
 			for it in its:
@@ -424,14 +474,6 @@ def main():
 		for i in range(7) :
 			total[i] /= total_size
 		total_time = (toc - tic) / total_size
-		# first_stage = first_stage / total_size
-		# cond_stage = cond_stage / total_size
-		# sample_canvas = sample_canvas / total_size
-		# vqmodel = vqmodel / total_size
-		# colorfix = colorfix / total_size
-		# print(f"image {total_size}, total={(toc-tic)/opt.loop}, first_stage={first_stage}, cond_stage={cond_stage}, sample_canvas={sample_canvas}, vqmodel={vqmodel}, colorfix={colorfix}")
-		# print(f"##### total time {0:8.4f} s, ddpm_steps={1:d} preprocess={} first_stage={2:8.4f}, cond_stage={3:8.4f}, sample_canvas={4:8.4f}, vqgan={5:8.4f}, colorfix={5:8.4f}".format(
-      	# 		total_time, opt.ddpm_steps, total[0], total[1], total[2], total[3], total[4], total[5], total[6] ))
 		print(f"##### total time {total_time:8.4f} s, ddpm_steps={opt.ddpm_steps}, preprocess={total[0]:.4f}, \
 first_stage={total[1]:.4f}, cond_stage={total[2]:.4f}, prepare={total[3]:.4f}, sample_canvas={total[4]:.4f}, \
 vqgan={total[5]:.4f}, colorfix={total[6]:.4f}")

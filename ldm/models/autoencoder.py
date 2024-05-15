@@ -339,7 +339,14 @@ class AutoencoderKL(pl.LightningModule):
     def encode(self, x, return_encfea=False):
         h = self.encoder(x)
         moments = self.quant_conv(h)
-        posterior = DiagonalGaussianDistribution(moments)
+        
+        mean, logvar = torch.chunk(moments, 2, dim=1)
+        logvar = torch.clamp(logvar, -30.0, 20.0)
+        std = torch.exp(0.5 * logvar)
+        var = torch.exp(logvar)
+        posterior = mean + std * torch.randn(mean.shape).to(device=moments.device)
+
+        # posterior = DiagonalGaussianDistribution(moments)
         if return_encfea:
             return posterior, moments
         return posterior
