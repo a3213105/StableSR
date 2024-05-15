@@ -39,7 +39,7 @@ import cv2
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-from ldm.models.diffusion.ov_operator_async import SRProcessor, SRResult
+from ldm.models.diffusion.ov_operator_async import SRProcessor, FirstStageProcessor
 
 __conditioning_keys__ = {'concat': 'c_concat',
                          'crossattn': 'c_crossattn',
@@ -1637,25 +1637,6 @@ class LatentDiffusionSRTextWT(DDPM):
                 else:
                     param.requires_grad = True
 
-        # print('>>>>>>>>>>>>>>>>model>>>>>>>>>>>>>>>>>>>>')
-        # param_list = []
-        # for name, params in self.model.named_parameters():
-        #     if params.requires_grad:
-        #         param_list.append(name)
-        # print(param_list)
-        # param_list = []
-        # print('>>>>>>>>>>>>>>>>>cond_stage_model>>>>>>>>>>>>>>>>>>>')
-        # for name, params in self.cond_stage_model.named_parameters():
-        #     if params.requires_grad:
-        #         param_list.append(name)
-        # print(param_list)
-        # param_list = []
-        # print('>>>>>>>>>>>>>>>>structcond_stage_model>>>>>>>>>>>>>>>>>>>>')
-        # for name, params in self.structcond_stage_model.named_parameters():
-        #     if params.requires_grad:
-        #         param_list.append(name)
-        # print(param_list)
-
         # P2 weighting: https://github.com/jychoi118/P2-weighting
         if p2_gamma is not None:
             assert p2_k is not None
@@ -1715,12 +1696,21 @@ class LatentDiffusionSRTextWT(DDPM):
 
     def instantiate_openvino_stage(self, config):
         try:
-            self.ov_processor = SRProcessor(config.params.xml_path)
+            self.ov_sr_processor = SRProcessor(config.params.sr_xml_path)
             shapes = [[1,77,1024], [1,4,64,64], [1], [1,4,64,64]]           
-            self.ov_processor.setup_model(stream_num = config.params.num_streams, bf16=True, shapes = shapes)
+            self.ov_sr_processor.setup_model(stream_num = config.params.sr_num_streams, bf16=True, shapes = shapes)
         except Exception as e:
             print(e)
-            self.ov_processor = None
+            self.ov_sr_processor = None
+            
+        try:
+            self.ov_fs_processor = FirstStageProcessor(config.params.first_stage_xml_path)
+            shapes = [[1,3,-1,-1]]           
+            self.ov_fs_processor.setup_model(stream_num = 1, bf16=True, shapes = shapes)
+
+        except Exception as e:
+            print(e)
+            self.ov_fs_processor = None
             
     def instantiate_first_stage(self, config):
         model = instantiate_from_config(config)
@@ -2262,43 +2252,45 @@ class LatentDiffusionSRTextWT(DDPM):
 
     @torch.no_grad()
     def encode_first_stage(self, x):
-        if hasattr(self, "split_input_params"):
-            if self.split_input_params["patch_distributed_vq"]:
-                ks = self.split_input_params["ks"]  # eg. (128, 128)
-                stride = self.split_input_params["stride"]  # eg. (64, 64)
-                df = self.split_input_params["vqf"]
-                self.split_input_params['original_image_size'] = x.shape[-2:]
-                bs, nc, h, w = x.shape
-                if ks[0] > h or ks[1] > w:
-                    ks = (min(ks[0], h), min(ks[1], w))
-                    print("reducing Kernel")
+        if self.ov_fs_processor is None:
+            if hasattr(self, "split_input_params"):
+                if self.split_input_params["patch_distributed_vq"]:
+                    ks = self.split_input_params["ks"]  # eg. (128, 128)
+                    stride = self.split_input_params["stride"]  # eg. (64, 64)
+                    df = self.split_input_params["vqf"]
+                    self.split_input_params['original_image_size'] = x.shape[-2:]
+                    bs, nc, h, w = x.shape
+                    if ks[0] > h or ks[1] > w:
+                        ks = (min(ks[0], h), min(ks[1], w))
+                        print("reducing Kernel")
 
-                if stride[0] > h or stride[1] > w:
-                    stride = (min(stride[0], h), min(stride[1], w))
-                    print("reducing stride")
+                    if stride[0] > h or stride[1] > w:
+                        stride = (min(stride[0], h), min(stride[1], w))
+                        print("reducing stride")
 
-                fold, unfold, normalization, weighting = self.get_fold_unfold(x, ks, stride, df=df)
-                z = unfold(x)  # (bn, nc * prod(**ks), L)
-                # Reshape to img shape
-                z = z.view((z.shape[0], -1, ks[0], ks[1], z.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
+                    fold, unfold, normalization, weighting = self.get_fold_unfold(x, ks, stride, df=df)
+                    z = unfold(x)  # (bn, nc * prod(**ks), L)
+                    # Reshape to img shape
+                    z = z.view((z.shape[0], -1, ks[0], ks[1], z.shape[-1]))  # (bn, nc, ks[0], ks[1], L )
 
-                output_list = [self.first_stage_model.encode(z[:, :, :, :, i])
-                               for i in range(z.shape[-1])]
+                    output_list = [self.first_stage_model.encode(z[:, :, :, :, i])
+                                for i in range(z.shape[-1])]
 
-                o = torch.stack(output_list, axis=-1)
-                o = o * weighting
+                    o = torch.stack(output_list, axis=-1)
+                    o = o * weighting
 
-                # Reverse reshape to img shape
-                o = o.view((o.shape[0], -1, o.shape[-1]))  # (bn, nc * ks[0] * ks[1], L)
-                # stitch crops together
-                decoded = fold(o)
-                decoded = decoded / normalization
-                return decoded
-
+                    # Reverse reshape to img shape
+                    o = o.view((o.shape[0], -1, o.shape[-1]))  # (bn, nc * ks[0] * ks[1], L)
+                    # stitch crops together
+                    decoded = fold(o)
+                    decoded = decoded / normalization
+                    return decoded
+                else:
+                    return self.first_stage_model.encode(x)
             else:
                 return self.first_stage_model.encode(x)
-        else:
-            return self.first_stage_model.encode(x)
+        else :
+            return self.ov_fs_processor(x)
 
     def shared_step(self, batch, **kwargs):
         x, c, gt = self.get_input(batch, self.first_stage_key)
@@ -2340,7 +2332,7 @@ class LatentDiffusionSRTextWT(DDPM):
         return [rescale_bbox(b) for b in bboxes]
 
     def forward_ov(self, input_list, cond_list, t_in, context):
-        model_out = self.ov_processor(input_list, cond_list, t_in, context)
+        model_out = self.ov_sr_processor(input_list, cond_list, t_in, context)
         # print(f"##### model_out={len(model_out)},  {model_out[0].shape}, {model_out[0]}")
         return model_out
     
@@ -2687,7 +2679,7 @@ class LatentDiffusionSRTextWT(DDPM):
 
         input_list = torch.cat(input_list, dim=0)
         cond_list = torch.cat(cond_list, dim=0)
-        if self.ov_processor is None :
+        if self.ov_sr_processor is None :
             noise_preds_row = self.loop_forward(input_list, cond_list, t_in, c, batch_size)
         else :
             noise_preds_row = self.forward_ov(input_list, cond_list, t_in, c)

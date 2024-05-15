@@ -7,7 +7,7 @@ export TSAN_OPTIONS='ignore_noninstrumented_modules=1'
 export OMP_NUM_THREADS=48
 export MKL_VERBOSE=0
 export KMP_BLOCKTIME=10
-export KMP_AFFINITY=granularity=fine,compact,1,0
+#export KMP_AFFINITY=granularity=fine,compact,1,0
 #export LD_PRELOAD=$ENV_PATH/lib/libjemalloc.so
 #export LD_PRELOAD=$ENV_PATH/lib/libtcmalloc.so
 export LD_PRELOAD=$ENV_PATH/lib/libiomp5.so:${LD_PRELOAD}

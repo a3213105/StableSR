@@ -170,3 +170,59 @@ class SRProcessor(OV_Operator):
             for i in range(nsize) :
                 res.append(self.postprocess(self.res.results[i][0]))
         return res
+
+
+class FirstStageResult(OV_Result):
+    def __init__(self, outputs) :
+        super().__init__(outputs)
+
+class FirstStageProcessor(OV_Operator):
+    def __init__(self, model, core=None, postprocess=None):
+        super().__init__(model, core, postprocess)
+
+    def setup_model(self, stream_num, bf16, shapes) :
+        super().setup_model(stream_num, bf16, shapes)
+        self.res = SRResult(self.outputs)
+        if self.infer_queue :
+            self.infer_queue.set_callback(self.res.completion_callback)
+
+    def run(self, inputs, input_tensors):
+        return self.__call__(input_tensors)
+
+    def __call__(self, input_list) :
+        self.infer_queue.start_async({0: input_list}, userdata=0)
+        self.infer_queue.wait_all()
+        
+        res = []
+        if self.postprocess is None:
+            return torch.tensor(self.res.results[0][0])
+        else :
+            return self.postprocess(self.res.results[0][0])
+
+
+class VQGanResult(OV_Result):
+    def __init__(self, outputs) :
+        super().__init__(outputs)
+
+class VQGanProcessor(OV_Operator):
+    def __init__(self, model, core=None, postprocess=None):
+        super().__init__(model, core, postprocess)
+
+    def setup_model(self, stream_num, bf16, shapes) :
+        super().setup_model(stream_num, bf16, shapes)
+        self.res = SRResult(self.outputs)
+        if self.infer_queue :
+            self.infer_queue.set_callback(self.res.completion_callback)
+
+    def run(self, inputs, input_tensors):
+        return self.__call__(input_tensors)
+
+    def __call__(self, input_list, samples) :
+        self.infer_queue.start_async({0: input_list, 1: samples,}, userdata=0)
+        self.infer_queue.wait_all()
+        
+        res = []
+        if self.postprocess is None:
+            return torch.tensor(self.res.results[0][0])
+        else :
+            return self.postprocess(self.res.results[0][0])
