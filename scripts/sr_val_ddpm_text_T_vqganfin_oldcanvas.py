@@ -332,10 +332,14 @@ def main():
 				)
 		init_image_list.append(cur_image)
 
+	vq_ov_flag = False
+	fs_ov_flag = False
+	sr_ov_flag = False
 	try:
 		vq_model = VQGanProcessor("./vq_model.xml")
 		shapes = None # [[1,3,2048,2048], [1, 4, 256, 256]]      
 		vq_model.setup_model(stream_num = 1, bf16=True, shapes = shapes)
+		vq_ov_flag = True
 	except Exception as e:
 		print("##### load vq_model.xml failed")
 		print(e)
@@ -379,6 +383,12 @@ def main():
 	model.ori_timesteps = list(use_timesteps)
 	model.ori_timesteps.sort()
 	model = model.eval()
+
+	if model.ov_sr_processor != None :
+		sr_ov_flag = True
+	if model.ov_fs_processor != None :
+		fs_ov_flag = True
+
 
 	if opt.bf16 == True:
 		model = model.to(torch.bfloat16)
@@ -430,7 +440,8 @@ def main():
 		total_time = (toc - tic) / total_size
 		print(f"##### total time {total_time:8.4f} s, ddpm_steps={opt.ddpm_steps}, preprocess={total[0]:.4f}, \
 first_stage={total[1]:.4f}, cond_stage={total[2]:.4f}, prepare={total[3]:.4f}, sample_canvas={total[4]:.4f}, \
-vqgan={total[5]:.4f}, colorfix={total[6]:.4f}")
+vqgan={total[5]:.4f}, colorfix={total[6]:.4f}, image={init_image_list[0].shape}, \
+fs_ov_flag={fs_ov_flag}, sr_ov_flag={sr_ov_flag}, vq_ov_flag={vq_ov_flag}")
 
 if __name__ == "__main__":
 	main()
