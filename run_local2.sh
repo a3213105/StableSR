@@ -22,11 +22,12 @@ function do_instance() {
     CMD=$4
     for((c=0;c<${CORES};c+=${CSTEP}))
     do
-        c0=$((${c}+${CORES}))
+        #c0=$((${c}+${CORES}))
+	c0=${c}
         c1=$((${c0}+${CSTEP}-1))
         c2=$((${c0}+${CORES}+${CORES}))
         c3=$((${c1}+${CORES}+${CORES}))
-#        echo "${c0}-${c1},${c2}-${c3}"
+        echo "${c0}-${c1},${c2}-${c3}"
         OMP_NUM_THREADS=${CSTEP} HF_ENDPOINT=https://hf-mirror.com HF_HUB_ENABLE_HF_TRANSFER=1 \
         numactl --physcpubind=${c0}-${c1},${c2}-${c3} python scripts/sr_val_ddpm_text_T_vqganfin_oldcanvas.py \
         --config configs/stableSRNew/v2-finetune_text_T_512.yaml --ckpt stablesr_000117.ckpt \
@@ -39,12 +40,12 @@ CSTEP=${1}
 cmds=("--bf16" "--bf16 --ipex1")
 CORES=`lscpu | grep "per socket" | awk {'print $4'}`
 echo "${cmds[@]}"
-for step in 10 20
+for step in 10
 do
     for cmd in "${cmds[@]}"
     do
         # for n in 1 2 3 4 5 6
-        for n in 8 
+        for n in 6 8 12 16 24
         do
             new_cmd="--n_samples ${n} ${cmd}"
             do_instance ${CORES} ${CSTEP} ${step} "${new_cmd}"

@@ -13,7 +13,7 @@ export no_proxy="localhost, 127.0.0.1, ::1, 127.0.0.1:7860, 127.0.0.1:7861, 127.
 
 #for cc in 48 24 16 12 8 6 4
 CORES=`lscpu | grep "per socket" | awk {'print $4'}`
-for cc in ${CORES} #24 16
+for cc in 96 48
 do
     bash ./run_local2.sh ${cc}
 done
