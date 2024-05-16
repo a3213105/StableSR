@@ -6,7 +6,7 @@ function check_log() {
     STEP=$3
     CMD=$4
     rm -rf /tmp/perf.log 2>/dev/null
-    for((c=0;c<${CORES};c+=${STEPS}))
+    for((c=0;c<${CORES};c+=${CSTEP}))
     do
         cat /tmp/${c}.log | grep "##### total" >> /tmp/perf.log
     done

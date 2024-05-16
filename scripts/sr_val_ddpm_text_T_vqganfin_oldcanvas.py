@@ -86,11 +86,11 @@ def chunk(it, size):
 
 def load_model_from_config(config, ckpt, verbose=False):
 	print(f"Loading model from {ckpt}")
+	model = instantiate_from_config(config.model)
 	pl_sd = torch.load(ckpt, map_location="cpu")
 	# if "global_step" in pl_sd:
 	# 	print(f"Global Step: {pl_sd['global_step']}")
 	sd = pl_sd["state_dict"]
-	model = instantiate_from_config(config.model)
 	m, u = model.load_state_dict(sd, strict=False)
 	if len(m) > 0 and verbose:
 		print("missing keys:")
@@ -114,7 +114,8 @@ def load_img(path):
 	image = torch.from_numpy(image)
 	return 2.*image - 1.
 
-def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, outpath = None):
+def process_pictures(model, vq_model, img_list, init_image_list, semantic_c, opt, 
+                     sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, outpath = None):
 	perf_time = []
 	for n in trange(len(init_image_list), desc="Sampling"):
 		t0 = time.time()
@@ -134,22 +135,22 @@ def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alpha
 		init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_template))  
 		t2 = time.time()
         # move to latent space
-		text_init = ['']*opt.n_samples
-		semantic_c = model.cond_stage_model(text_init)
-		t3 = time.time()
+		# text_init = ['']*opt.n_samples
+		# semantic_c = model.cond_stage_model(text_init)
+		# t3 = time.time()
 		noise = torch.randn_like(init_latent)
 		# If you would like to start from the intermediate steps, you can add noise to LR to the specific steps.
 		t = repeat(torch.tensor([999]), '1 -> b', b=init_image.size(0))
 		t = t.long()
 		x_T = model.q_sample_respace(x_start=init_latent, t=t, sqrt_alphas_cumprod=sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod=sqrt_one_minus_alphas_cumprod, noise=noise)
-		t4 = time.time()
+		t3 = time.time()
 		samples, _ = model.sample_canvas(cond=semantic_c, struct_cond=init_latent, batch_size=init_image.size(0), timesteps=opt.ddpm_steps, time_replace=opt.ddpm_steps, x_T=x_T, return_intermediates=True, tile_size=int(opt.input_size/8), tile_overlap=opt.tile_overlap, batch_size_sample=opt.n_samples)
-		t5 = time.time()
+		t4 = time.time()
 		# print(f"##### init_template={init_template.shape}, samples={samples.shape}")
 		# _, enc_fea_lq = vq_model.encode(init_template)
 		# x_samples = vq_model.decode(samples * 1. / model.scale_factor, enc_fea_lq)
 		x_samples = vq_model(init_template, samples * 1. / model.scale_factor)
-		t6 = time.time()
+		t5 = time.time()
 		# print(f"##### init_template={init_template.shape}, samples={samples.shape}, x_samples={x_samples.shape}")
 		if ori_size is not None:
 			x_samples = x_samples[:, :, :ori_size[-2], :ori_size[-1]]
@@ -158,7 +159,7 @@ def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alpha
 		elif opt.colorfix_type == 'wavelet':
 			x_samples = wavelet_reconstruction(x_samples, init_image)
 		x_samples = torch.clamp((x_samples + 1.0) / 2.0, min=0.0, max=1.0)
-		t7 = time.time()
+		t6 = time.time()
 		if outpath != None :
 			for i in range(init_image.size(0)):
 				img_name = img_list.pop(0)
@@ -168,7 +169,7 @@ def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alpha
 				init_image = torch.clamp((init_image + 1.0) / 2.0, min=0.0, max=1.0)
 				init_image = 255. * rearrange(init_image[i].cpu().numpy(), 'c h w -> h w c')
 				Image.fromarray(init_image.astype(np.uint8)).save(os.path.join(outpath, basename+'_lq.png'))
-		perf_time.append([t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t6-t5, t7-t6])
+		perf_time.append([t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t6-t5])
 	return perf_time
 
 def convert_vqgan(vqgan, ir_path) :
@@ -176,17 +177,42 @@ def convert_vqgan(vqgan, ir_path) :
     height = 2048
     input_tensor = torch.randn([1, 3, width, height])
     sample_tensor = torch.randn([1, 4, int(width/8), int(height/8)])
+    trace_model = torch.jit.trace(vqgan, (input_tensor, sample_tensor))
     input_names = ['init_template', 'samples']
     dynamic_axes = { 'init_template': { 0: 'batch', 2: 'width', 3: 'height'}, 'samples': { 0: 'batch', 2: 'width', 3: 'height'}, }
-    torch.onnx.export(vqgan, (input_tensor, sample_tensor), ir_path, input_names=input_names, dynamic_axes=dynamic_axes)
+    torch.onnx.export(trace_model, (input_tensor, sample_tensor), ir_path, input_names=input_names, dynamic_axes=dynamic_axes)
 
-def convert_first_stage(model, ir_path) :
-    width = 2048
-    height = 2048
-    input_tensor = torch.randn([1, 3, width, height])
-    input_names = ['init_template']
-    dynamic_axes = { 'init_template': { 0: 'batch', 2: 'width', 3: 'height'},}
-    torch.onnx.export(vqgan, (input_tensor), ir_path, input_names=input_names, dynamic_axes=dynamic_axes)
+def convert_first_stage(first_stage_model, ir_path) :
+	class FirstStageWrapper(torch.nn.Module):
+		def __init__(self, model) :
+			super(FirstStageWrapper, self).__init__()
+			self.model = first_stage_model
+		def forward(self, input_tensor) :
+			h = self.model.encoder(input_tensor)
+			moments = self.model.quant_conv(h)
+			mean, logvar = torch.chunk(moments, 2, dim=1)
+			logvar = torch.clamp(logvar, -30.0, 20.0)
+			std = torch.exp(0.5 * logvar)
+			var = torch.exp(logvar)
+			x = mean + std * torch.randn(mean.shape)
+			return x
+
+	first_model = FirstStageWrapper(model)
+	width = 2048
+	height = 2048
+	input_tensor = torch.randn([1, 3, width, height])
+	input_names = ['init_template']
+	dynamic_axes = { 'init_template': { 0: 'batch', 2: 'width', 3: 'height'},} 
+	trace_model = torch.jit.trace(first_model, (input_tensor))
+	torch.onnx.export(trace_model, (input_tensor), ir_path, input_names=input_names, dynamic_axes=dynamic_axes)
+
+def convert_context_stage(cond_stage_model, ir_path) :
+	n_samples = 1
+	text_init = ['']*n_samples
+	input_names = ['text_init']
+	dynamic_axes = { 'text_init': { 0: 'batch'},} 
+	# trace_model = torch.jit.trace(cond_stage_model, (text_init))
+	torch.onnx.export(cond_stage_model, (text_init), ir_path, input_names=input_names, dynamic_axes=dynamic_axes)
 
 def init_params() :
 	parser = argparse.ArgumentParser()
@@ -244,7 +270,7 @@ def init_params() :
 	parser.add_argument(
 		"--vqgan_ckpt",
 		type=str,
-		default="./vqgan_cfw_00011.ckpt",
+		default="models/vqgan_cfw_00011.ckpt",
 		help="path to checkpoint of VQGAN model",
 	)
 	parser.add_argument(
@@ -323,19 +349,19 @@ def init_params() :
 	parser.add_argument(
 		"--vq_path",
 		type=str,
-		default="./vq_model_dyn.xml",
+		default="models/vq_model_dyn.xml",
 		help="path to vqgan model xml",
 	)
 	parser.add_argument(
 		"--fs_path",
 		type=str,
-		default="./first_stage.xml",
+		default="models/first_stage_dyn.xml",
 		help="path to first_stage model xml",
 	)
 	parser.add_argument(
 		"--sr_path",
 		type=str,
-		default="./sr_model.xml",
+		default="models/sr_model.xml",
 		help="path to sr model xml",
 	)
 	return parser
@@ -372,10 +398,7 @@ def main():
 	sr_ov_flag = False
 	try:
 		vq_model = VQGanProcessor(opt.vq_path)
-		width = 640
-		height = 1984
-		shapes = [[1, 3, width, height], [1, 4, 80, 248]]      
-		shapes = None
+		shapes = [[1, 3, 2048, 2048],[1, 4, 256, 256]]
 		vq_model.setup_model(stream_num = 1, bf16=True, shapes = shapes)
 		vq_ov_flag = True
 	except Exception as e:
@@ -384,7 +407,7 @@ def main():
 		vqgan_config = OmegaConf.load("configs/autoencoder/autoencoder_kl_64x64x4_resi.yaml")
 		vq_model = load_model_from_config(vqgan_config, opt.vqgan_ckpt)
 		vq_model = vq_model.eval()
-		# convert_vqgan(vq_model, "/tmp/vq_model.xml")
+		convert_vqgan(vq_model, "/tmp/vq_model_dyn.onnx")
 		if opt.bf16 == True:
 			vq_model = vq_model.to(torch.bfloat16)
 		if opt.ipex1 == True:
@@ -397,7 +420,8 @@ def main():
 	config.model.params.openvino_config.params.sr_xml_path = opt.sr_path #"./sr_model.xml"
 	config.model.params.openvino_config.params.first_stage_xml_path = opt.fs_path #"./first_stage.xml"
 
-	model = load_model_from_config(config, f"{opt.ckpt}")
+	# model = load_model_from_config(config, f"{opt.ckpt}")
+	model = instantiate_from_config(config.model)
 	model = model.to(device)
 	model.configs = config
 	model.register_schedule(given_betas=None, beta_schedule="linear", timesteps=1000,
@@ -421,7 +445,8 @@ def main():
 	model.ori_timesteps = list(use_timesteps)
 	model.ori_timesteps.sort()
 	model = model.eval()
-
+	# convert_first_stage(model, "/tmp/first_stage_dyn.onnx")
+	# convert_context_stage(model.cond_stage_model, "/tmp/first_stage_dyn.onnx")
 	if model.ov_sr_processor != None :
 		sr_ov_flag = True
 	if model.ov_fs_processor != None :
@@ -432,31 +457,35 @@ def main():
 		model = model.to(torch.bfloat16)
 
 	with torch.no_grad(), torch.cpu.amp.autocast(enabled=opt.bf16, dtype=torch.bfloat16):
+		text_init = ['']*opt.n_samples
+		semantic_c = model.cond_stage_model(text_init)
+
 		print(f"img size={len(init_image_list)}, loop={opt.loop}, shape={init_image_list[0].size()}")
 		###warm up
-		perf_time = process_pictures(model, vq_model, img_list, init_image_list, opt, 
-                               sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, outpath)
+		perf_time = process_pictures(model, vq_model, img_list, init_image_list, semantic_c, opt, 
+                            		 sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, outpath)
 		print(f"{perf_time[0]}")
         ### benchmark
 		all_perf_time = []
 		tic = time.time()
 		for i in range(opt.loop) :
-			all_perf_time.append(process_pictures(model, vq_model, img_list, init_image_list, opt, 
-                                         sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod))
+			all_perf_time.append(process_pictures(model, vq_model, img_list, init_image_list, semantic_c,
+                                 opt, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod))
 		toc = time.time()
-		total = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ]
+		total = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ]
 		for its in all_perf_time:
 			for it in its:
 				for i in range(len(it)) :
 					total[i] += it[i]
 		total_size = opt.loop * len(init_image_list)
-		for i in range(7) :
+		for i in range(len(total)) :
 			total[i] /= total_size
 		total_time = (toc - tic) / total_size
-		print(f"##### total time {total_time:8.4f} s, ddpm_steps={opt.ddpm_steps}, preprocess={total[0]:.4f}, \
-			first_stage={total[1]:.4f}, cond_stage={total[2]:.4f}, prepare={total[3]:.4f}, sample_canvas={total[4]:.4f}, \
-			vqgan={total[5]:.4f}, colorfix={total[6]:.4f}, image={init_image_list[0].shape}, \
-			fs_ov_flag={fs_ov_flag}, sr_ov_flag={sr_ov_flag}, vq_ov_flag={vq_ov_flag}, n_samples={opt.n_samples}")
+		print(f"##### total time {total_time:8.4f} s, ddpm_steps={opt.ddpm_steps}, preprocess={total[0]:.4f}, "
+			  f"first_stage={total[1]:.4f}, prepare={total[2]:.4f}, sample_canvas={total[3]:.4f}, "
+			  f"vqgan={total[4]:.4f}, colorfix={total[5]:.4f}, image={init_image_list[0].shape}, "
+			  f"fs_ov_flag={fs_ov_flag}, sr_ov_flag={sr_ov_flag}, vq_ov_flag={vq_ov_flag}, "
+			  f"n_samples={opt.n_samples}")
 
 if __name__ == "__main__":
 	main()

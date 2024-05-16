@@ -520,34 +520,6 @@ class AutoencoderKLResi(pl.LightningModule):
                 else:
                     param.requires_grad = False
 
-        # print('>>>>>>>>>>>>>>>>>trainable_list>>>>>>>>>>>>>>>>>>>')
-        # trainable_list = []
-        # for name, params in self.named_parameters():
-        #     if params.requires_grad:
-        #         trainable_list.append(name)
-        # print(trainable_list)
-
-        # print('>>>>>>>>>>>>>>>>>Untrainable_list>>>>>>>>>>>>>>>>>>>')
-        # untrainable_list = []
-        # for name, params in self.named_parameters():
-        #     if not params.requires_grad:
-        #         untrainable_list.append(name)
-        # print(untrainable_list)
-        # untrainable_list = list(set(trainable_list).difference(set(missing_list)))
-        # print('>>>>>>>>>>>>>>>>>untrainable_list>>>>>>>>>>>>>>>>>>>')
-        # print(untrainable_list)
-
-    # def init_from_ckpt(self, path, ignore_keys=list()):
-    #     sd = torch.load(path, map_location="cpu")["state_dict"]
-    #     keys = list(sd.keys())
-    #     for k in keys:
-    #         for ik in ignore_keys:
-    #             if k.startswith(ik):
-    #                 print("Deleting key {} from state_dict.".format(k))
-    #                 del sd[k]
-    #     self.load_state_dict(sd, strict=False)
-    #     print(f"Restored from {path}")
-
     def init_from_ckpt(self, path, ignore_keys=list(), only_model=False):
         sd = torch.load(path, map_location="cpu")
         if "state_dict" in list(sd.keys()):

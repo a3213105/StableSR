@@ -1615,18 +1615,24 @@ class LatentDiffusionSRTextWT(DDPM):
             self.scale_factor = scale_factor
         else:
             self.register_buffer('scale_factor', torch.tensor(scale_factor))
+        
         self.instantiate_openvino_stage(openvino_config)
-        self.instantiate_first_stage(first_stage_config)
+        if self.ov_fs_processor is None:
+            print(f"##### load first_stage from {first_stage_config}")
+            self.instantiate_first_stage(first_stage_config)
+    
         self.instantiate_cond_stage(cond_stage_config)
-        self.instantiate_structcond_stage(structcond_stage_config)
         self.cond_stage_forward = cond_stage_forward
+    
+        self.restarted_from_ckpt = False
+        if self.ov_sr_processor is None:
+            self.instantiate_structcond_stage(structcond_stage_config)
+            if ckpt_path is not None:
+                self.init_from_ckpt(ckpt_path, ignore_keys)
+                self.restarted_from_ckpt = True
+        
         self.clip_denoised = False
         self.bbox_tokenizer = None
-
-        self.restarted_from_ckpt = False
-        if ckpt_path is not None:
-            self.init_from_ckpt(ckpt_path, ignore_keys)
-            self.restarted_from_ckpt = True
 
         if not self.unfrozen_diff:
             self.model.eval()
@@ -1697,7 +1703,7 @@ class LatentDiffusionSRTextWT(DDPM):
     def instantiate_openvino_stage(self, config):
         try:
             self.ov_sr_processor = SRProcessor(config.params.sr_xml_path)
-            shapes = [[1,77,1024], [1,4,64,64], [1], [1,4,64,64]]           
+            shapes = [[1,4,64,64], [1], [1,4,64,64], [1,77,1024]]           
             self.ov_sr_processor.setup_model(stream_num = config.params.sr_num_streams, bf16=True, shapes = shapes)
         except Exception as e:
             print(e)
@@ -1705,7 +1711,8 @@ class LatentDiffusionSRTextWT(DDPM):
             
         try:
             self.ov_fs_processor = FirstStageProcessor(config.params.first_stage_xml_path)
-            shapes = [[1,3,2048,2048]]           
+            shapes = [[1,3,2048,2048]]
+            # shapes = [[1,3,640,1984]]
             self.ov_fs_processor.setup_model(stream_num = 1, bf16=True, shapes = shapes)
 
         except Exception as e:
@@ -1720,6 +1727,7 @@ class LatentDiffusionSRTextWT(DDPM):
             param.requires_grad = False
 
     def instantiate_cond_stage(self, config):
+        print(f"##### instantiate_from_config from {config}")
         if not self.cond_stage_trainable:
             if config == "__is_first_stage__":
                 print("Using first stage also as cond stage.")

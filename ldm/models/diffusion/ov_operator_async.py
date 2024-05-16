@@ -240,6 +240,8 @@ class VQGanProcessor(OV_Operator):
         _, _, mw0, mh0 = self.input_shapes[self.input_names[0]]
         _, _, mw1, mh1 = self.input_shapes[self.input_names[1]]
         if input_tensor.shape[2]!=mw0 or input_tensor.shape[3]!=mh0 or samples_tensor.shape[2]!=mw1 or samples_tensor.shape[3]!=mh1 :
+            print(f"##### input_tensor.shape={input_tensor.shape}, {self.input_shapes[self.input_names[0]]} ")
+            print(f"##### samples_tensor.shape={samples_tensor.shape}, {self.input_shapes[self.input_names[1]]} ")
             self.reshape_model([input_tensor.shape, samples_tensor.shape])
         if self.infer_queue is None :
             return torch.tensor(self.exec_net.infer_new_request({0: input_tensor, 1: samples_tensor,})[0])
