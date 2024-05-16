@@ -114,7 +114,6 @@ def load_img(path):
 	image = torch.from_numpy(image)
 	return 2.*image - 1.
 
-
 def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alphas_cumprod, sqrt_one_minus_alphas_cumprod, outpath = None):
 	perf_time = []
 	for n in trange(len(init_image_list), desc="Sampling"):
@@ -146,11 +145,12 @@ def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alpha
 		t4 = time.time()
 		samples, _ = model.sample_canvas(cond=semantic_c, struct_cond=init_latent, batch_size=init_image.size(0), timesteps=opt.ddpm_steps, time_replace=opt.ddpm_steps, x_T=x_T, return_intermediates=True, tile_size=int(opt.input_size/8), tile_overlap=opt.tile_overlap, batch_size_sample=opt.n_samples)
 		t5 = time.time()
+		# print(f"##### init_template={init_template.shape}, samples={samples.shape}")
 		# _, enc_fea_lq = vq_model.encode(init_template)
 		# x_samples = vq_model.decode(samples * 1. / model.scale_factor, enc_fea_lq)
 		x_samples = vq_model(init_template, samples * 1. / model.scale_factor)
 		t6 = time.time()
-		print(f"##### init_template={init_template.shape}, samples={samples.shape}, x_samples={x_samples.shape}")
+		# print(f"##### init_template={init_template.shape}, samples={samples.shape}, x_samples={x_samples.shape}")
 		if ori_size is not None:
 			x_samples = x_samples[:, :, :ori_size[-2], :ori_size[-1]]
 		if opt.colorfix_type == 'adain':
@@ -170,6 +170,23 @@ def process_pictures(model, vq_model, img_list, init_image_list, opt, sqrt_alpha
 				Image.fromarray(init_image.astype(np.uint8)).save(os.path.join(outpath, basename+'_lq.png'))
 		perf_time.append([t1-t0, t2-t1, t3-t2, t4-t3, t5-t4, t6-t5, t7-t6])
 	return perf_time
+
+def convert_vqgan(vqgan, ir_path) :
+    width = 2048
+    height = 2048
+    input_tensor = torch.randn([1, 3, width, height])
+    sample_tensor = torch.randn([1, 4, int(width/8), int(height/8)])
+    input_names = ['init_template', 'samples']
+    dynamic_axes = { 'init_template': { 0: 'batch', 2: 'width', 3: 'height'}, 'samples': { 0: 'batch', 2: 'width', 3: 'height'}, }
+    torch.onnx.export(vqgan, (input_tensor, sample_tensor), ir_path, input_names=input_names, dynamic_axes=dynamic_axes)
+
+def convert_first_stage(model, ir_path) :
+    width = 2048
+    height = 2048
+    input_tensor = torch.randn([1, 3, width, height])
+    input_names = ['init_template']
+    dynamic_axes = { 'init_template': { 0: 'batch', 2: 'width', 3: 'height'},}
+    torch.onnx.export(vqgan, (input_tensor), ir_path, input_names=input_names, dynamic_axes=dynamic_axes)
 
 def init_params() :
 	parser = argparse.ArgumentParser()
@@ -303,6 +320,24 @@ def init_params() :
 		default=False,
 		help="enable profiler",
 	)
+	parser.add_argument(
+		"--vq_path",
+		type=str,
+		default="./vq_model_dyn.xml",
+		help="path to vqgan model xml",
+	)
+	parser.add_argument(
+		"--fs_path",
+		type=str,
+		default="./first_stage.xml",
+		help="path to first_stage model xml",
+	)
+	parser.add_argument(
+		"--sr_path",
+		type=str,
+		default="./sr_model.xml",
+		help="path to sr model xml",
+	)
 	return parser
 
 def main():
@@ -336,8 +371,11 @@ def main():
 	fs_ov_flag = False
 	sr_ov_flag = False
 	try:
-		vq_model = VQGanProcessor("./vq_model.xml")
-		shapes = None # [[1,3,2048,2048], [1, 4, 256, 256]]      
+		vq_model = VQGanProcessor(opt.vq_path)
+		width = 640
+		height = 1984
+		shapes = [[1, 3, width, height], [1, 4, 80, 248]]      
+		shapes = None
 		vq_model.setup_model(stream_num = 1, bf16=True, shapes = shapes)
 		vq_ov_flag = True
 	except Exception as e:
@@ -356,8 +394,8 @@ def main():
 
 	config = OmegaConf.load(f"{opt.config}")
 	config.model.params.openvino_config.params.sr_num_streams = opt.n_samples
-	config.model.params.openvino_config.params.sr_xml_path = "./sr_model.xml"
-	config.model.params.openvino_config.params.first_stage_xml_path = "./first_stage.xml"
+	config.model.params.openvino_config.params.sr_xml_path = opt.sr_path #"./sr_model.xml"
+	config.model.params.openvino_config.params.first_stage_xml_path = opt.fs_path #"./first_stage.xml"
 
 	model = load_model_from_config(config, f"{opt.ckpt}")
 	model = model.to(device)
@@ -393,29 +431,6 @@ def main():
 	if opt.bf16 == True:
 		model = model.to(torch.bfloat16)
 
-	# if opt.ipex2 == True:
-	# 	with torch.cpu.amp.autocast(enabled=opt.bf16), torch.no_grad():        
-	# 		x = torch.randn([1, 4, 64, 64]).float()
-	# 		t = torch.ones(1, dtype=torch.int32)
-	# 		context = torch.randn([1, 77, 1024]).float()
-	# 		struct_cond = {}
-	# 		struct_cond[str(64)] = torch.randn([1, 256, 64, 64]).float()
-	# 		struct_cond[str(32)] = torch.randn([1, 256, 32, 32]).float()
-	# 		struct_cond[str(16)] = torch.randn([1, 256, 16, 16]).float()
-	# 		struct_cond[str(8)] =  torch.randn([1, 256, 8, 8]).float()
-	# 		unet_ipex = torch.jit.trace(model.model.diffusion_model, (x, t, context, struct_cond), check_trace=False, strict=False)
-	# 		model.model.diffusion_model = torch.jit.freeze(unet_ipex)
-
-			# if opt.profile:
-			# 	print("*********************************")
-			# 	print(unet_ipex.graph_for(x, t, context, struct_cond))
-			# 	for _ in range(5):
-			# 		unet_ipex(x, t, context, struct_cond)
-			# 		with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as p:
-			# 			unet_ipex(x, t, context, struct_cond)
-			# 			print(p.key_averages().table(sort_by="self_cpu_time_total", row_limit=15))
-			# 	exit()
-
 	with torch.no_grad(), torch.cpu.amp.autocast(enabled=opt.bf16, dtype=torch.bfloat16):
 		print(f"img size={len(init_image_list)}, loop={opt.loop}, shape={init_image_list[0].size()}")
 		###warm up
@@ -439,9 +454,9 @@ def main():
 			total[i] /= total_size
 		total_time = (toc - tic) / total_size
 		print(f"##### total time {total_time:8.4f} s, ddpm_steps={opt.ddpm_steps}, preprocess={total[0]:.4f}, \
-first_stage={total[1]:.4f}, cond_stage={total[2]:.4f}, prepare={total[3]:.4f}, sample_canvas={total[4]:.4f}, \
-vqgan={total[5]:.4f}, colorfix={total[6]:.4f}, image={init_image_list[0].shape}, \
-fs_ov_flag={fs_ov_flag}, sr_ov_flag={sr_ov_flag}, vq_ov_flag={vq_ov_flag}")
+			first_stage={total[1]:.4f}, cond_stage={total[2]:.4f}, prepare={total[3]:.4f}, sample_canvas={total[4]:.4f}, \
+			vqgan={total[5]:.4f}, colorfix={total[6]:.4f}, image={init_image_list[0].shape}, \
+			fs_ov_flag={fs_ov_flag}, sr_ov_flag={sr_ov_flag}, vq_ov_flag={vq_ov_flag}, n_samples={opt.n_samples}")
 
 if __name__ == "__main__":
 	main()
