@@ -34,6 +34,7 @@ def print_inputs_and_outputs_info(model: Model):
         print(f"    {out_name} (node: {node_name}) : {output.element_type.get_type_name()} / "
                     f"{str(output.node.layout)} / {output.partial_shape}")
 
+
 def print_runtime_params(compiled_model) :
     keys = compiled_model.get_property(properties.supported_properties())
     print("Model:")
@@ -61,7 +62,6 @@ class OV_Operator(object):
     outputs= None
 
     def __init__(self, model, core=None, postprocess=None):
-        self.infer_request = None
         self.postprocess = postprocess
         if core is None :
             self.core = Core()
@@ -96,8 +96,6 @@ class OV_Operator(object):
         for k, v in new_shapes.items():
             self.input_shapes[k] = v
         self.exec_net = self.core.compile_model(self.model, 'CPU', self.config)
-        if self.infer_request is not None:
-            self.infer_request = self.exec_net.create_infer_request()
 
     def setup_model(self, stream_num, bf16, shapes) :
         self.config = self.prepare_for_cpu(stream_num, bf16)
@@ -109,10 +107,10 @@ class OV_Operator(object):
         print_runtime_params(self.exec_net)
         self.num_requests = self.exec_net.get_property("OPTIMAL_NUMBER_OF_INFER_REQUESTS")
         if self.num_requests == 1:
-            self.infer_request = self.exec_net.create_infer_request()
+            # self.request = InferRequest(self.exec_net)
             self.infer_queue = None
         else :
-            self.infer_request = None 
+            # self.request = None 
             self.infer_queue = AsyncInferQueue(self.exec_net, self.num_requests)
             self.num_requests = len(self.infer_queue)
         print('Model ({})  using {} streams'.format(self.model.get_friendly_name(), self.num_requests))
@@ -176,7 +174,7 @@ class SRProcessor(OV_Operator):
                                           1: t_in[0].unsqueeze(0),
                                           2: input_list[i].unsqueeze(0),
                                           3: context[0].unsqueeze(0)}, 
-                                         userdata=i, share_inputs=True)
+                                         userdata=i)
         self.infer_queue.wait_all()
         
         res = []
@@ -210,21 +208,16 @@ class FirstStageProcessor(OV_Operator):
         if  input_tensor.shape[2]!=mw or input_tensor.shape[3]!=mh :
             self.reshape_model([input_tensor.shape])
         if self.infer_queue is None :
-            return torch.tensor(
-                self.infer_request.infer(
-                    {0: input_tensor,}, 
-                    share_inputs=True, 
-                    share_outputs=True)
-                [0])
-            # return torch.tensor(self.exec_net.infer_new_request({0: input_tensor})[0])
+            return torch.tensor(self.exec_net.infer_new_request({0: input_tensor})[0])
     
-        self.infer_queue.start_async({0: input_tensor}, userdata=0, share_inputs=True)
+        self.infer_queue.start_async({0: input_tensor}, userdata=0)
         self.infer_queue.wait_all()    
         res = []
         if self.postprocess is None:
             return torch.tensor(self.res.results[0][0])
         else :
             return self.postprocess(self.res.results[0][0])
+
 
 class VQGanResult(OV_Result):
     def __init__(self, outputs) :
@@ -251,15 +244,9 @@ class VQGanProcessor(OV_Operator):
             print(f"##### samples_tensor.shape={samples_tensor.shape}, {self.input_shapes[self.input_names[1]]} ")
             self.reshape_model([input_tensor.shape, samples_tensor.shape])
         if self.infer_queue is None :
-            return torch.tensor(
-                self.infer_request.infer(
-                    {0: input_tensor, 1: samples_tensor,}, 
-                    share_inputs=True, 
-                    share_outputs=True)
-                [0])
-            # return torch.tensor(self.exec_net.infer_new_request({0: input_tensor, 1: samples_tensor,})[0])
+            return torch.tensor(self.exec_net.infer_new_request({0: input_tensor, 1: samples_tensor,})[0])
         
-        self.infer_queue.start_async({0: input_tensor, 1: samples_tensor,}, userdata=0, share_inputs=True)
+        self.infer_queue.start_async({0: input_tensor, 1: samples_tensor,}, userdata=0)
         self.infer_queue.wait_all()
        
         if self.postprocess is None:
